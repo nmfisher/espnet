@@ -1,0 +1,115 @@
+import six
+
+import torch
+import torch.nn.functional as F
+
+from prenet import Prenet
+
+class MOLAttn(torch.nn.Module):
+    """mixture-of-logistics attention module.
+    :param int cdim: dimension to use for context vector 
+    :param int enc_odim: dimension of encoder outputs 
+    :param int dec_odim: dimension of decoder pre-net outputs (RNN attention layer then accept a tensor of dim (enc_odim + cdim)
+    :param int att_dim: hidden size for RNN attention layer
+    :param int num_dist: number of mixture components to use
+    """
+
+    def __init__(
+        self, enc_odim, dec_odim, att_dim, cdim, batch_size, num_dists=5, frames_per_step=5
+    ):
+        super(MOLAttn, self).__init__()
+        
+        self.rnn_input_dim = cdim + dec_odim
+        self.rnn = torch.nn.GRU(self.rnn_input_dim, att_dim, batch_first=True)
+
+        self.cdim = cdim
+        self.enc_odim = enc_odim
+        self.att_dim = att_dim
+        self.dec_odim = dec_odim
+        self.frames_per_step = frames_per_step
+        self.num_dists = num_dists
+        self.batch_size = batch_size
+        
+        # fully-connected layer for predicting logistic distribution parameters
+        # mean/scale/mixture weight
+        # accepts hidden state of B x S x HS
+        # outputs B x S x 
+        self.param_nets = [ torch.nn.Sequential(
+                torch.nn.Linear(self.att_dim, self.att_dim), 
+                torch.nn.Tanh(),
+                torch.nn.Linear(self.att_dim, 3), 
+            ) for k in range(self.num_dists) 
+        ]        
+
+    def _logistic(self, x, mean, scale):
+        return 1 / (1 + torch.exp(-(x - mean / scale)))
+
+    def _reset(self):
+        # randomize initial hidden state (? check this)
+        self.h = torch.randn(1, self.batch_size, self.att_dim)
+        self.c = torch.zeros(self.batch_size, self.cdim)
+        # create placeholder for means of logistic distributions
+        self.means = torch.zeros(self.batch_size, self.num_dists)
+
+    def forward(
+        self,
+        enc_z,
+        dec_z,
+        i
+        #,
+        #y,
+    ):
+        """Calculate AttLoc forward propagation.
+        :param torch.Tensor enc_z: encoder outputs (B x N x D_dec)
+        :param torch.Tensor dec_z: last acoustic frame output (processed by decoder pre-net) (B x  D_dec)
+        :param int i: decoder step        
+        :return: concatenated context + hidden state (B x N x D_dec)
+        :rtype: torch.Tensor
+        """
+        if i == 0:
+            self._reset()
+
+        enc_seq_len = enc_z.size()[1]
+
+        # create placeholder for output i.e. (concatenated context + hidden state) that will be fed to downstream decoders
+        # B x N x (DX2) (where D is the dimension of the context/hidden vectors)
+        
+        # pass input and hidden state to RNN
+        # returns new context vector and hidden state for this timestep
+        # during training, the input on the first decoder step will simply be a zero frame
+        # subequent steps will use the nth decoder pre-net output frame  (i.e. acoustic features passed through pre-net) with the last context vector
+        # during inference time, this is replaced with the predicted acoustic features passed through prenet
+        
+        # concatenate pre-net output with last context vector
+        att_in = torch.unsqueeze(torch.cat([dec_z, self.c], dim=1), dim=1)
+
+        print(att_in.size())
+        print(self.h.size())
+        print(self.att_dim)
+        print(self.rnn_input_dim)
+
+        # pass input and last state into RNN
+        o_i,self.h = self.rnn(att_in, self.h)
+
+        # placeholder tensor for encoder timestep probabilities
+        a = torch.Tensor(self.batch_size, enc_seq_len)
+
+        # apply FC nets to get params for each mixture            
+        for k in range(self.num_dists):
+            params = self.param_nets[k](self.h)
+            
+            mean = self.means[:, k] + torch.exp(params[:,0]) 
+            scales = torch.exp(params[:,1]) 
+            weights = torch.nn.functional.softmax(params[:, 2])
+                            
+            # calculate alignment probabilities for each encoder timestep
+            for j in range(seq_length):
+                f1 = _logistic(j + 0.5,  means[:,k], scales[:,k])
+                f2 = _logistic(j - 0.5, means[:,k], scales[:,k])
+                a[:,j] += weights[:,k] * (f1 - f2)
+            
+        self.c = a * enc.z
+        # return context vector appended to hidden state               
+        return torch.cat([self.h,self.c])
+
+
