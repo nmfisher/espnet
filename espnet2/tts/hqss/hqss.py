@@ -15,11 +15,13 @@ import torch.nn.functional as F
 
 from typeguard import check_argument_types
 
-from espnet.nets.pytorch_backend.hqss import HQSSLoss
+from espnet.nets.pytorch_backend.hqss.loss import HQSSLoss
 from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
-from espnet.nets.pytorch_backend.tacotron2.decoder import Decoder
-from espnet.nets.pytorch_backend.tacotron2.encoder import Encoder
+from espnet.nets.pytorch_backend.hqss.decoder import Decoder
+from espnet.nets.pytorch_backend.hqss.encoder import Encoder
+
 from espnet2.torch_utils.device_funcs import force_gatherable
+
 from espnet2.tts.abs_tts import AbsTTS
 
 
@@ -30,9 +32,9 @@ class HQSS(AbsTTS):
         # network structure related
         idim: int,
         odim: int,
+        max_oseq_len: int,
+        batch_size: int,
         embed_dim: int = 512,
-        elayers: int = 1,
-        eunits: int = 512,
         econv_layers: int = 3,
         econv_chans: int = 512,
         econv_filts: int = 5,
@@ -62,7 +64,6 @@ class HQSS(AbsTTS):
             idim (int): Dimension of the inputs.
             odim: (int) Dimension of the outputs.
             embed_dim (int): Dimension of the token embedding.
-            elayers (int): Number of encoder blstm layers.
             eunits (int): Number of encoder blstm units.
             econv_layers (int): Number of encoder conv layers.
             econv_filts (int): Number of encoder conv filter size.
@@ -78,7 +79,6 @@ class HQSS(AbsTTS):
             adim (int): Number of dimension of mlp in attention.
             aconv_chans (int): Number of attention conv filter channels.
             aconv_filts (int): Number of attention conv filter size.
-            cumulate_att_w (bool): Whether to cumulate previous attention weight.
             use_batch_norm (bool): Whether to use batch normalization.
             use_concate (bool): Whether to concat enc outputs w/ dec lstm outputs.
             reduction_factor (int): Reduction factor.            
@@ -90,7 +90,7 @@ class HQSS(AbsTTS):
             bce_pos_weight (float): Weight of positive sample of stop token
                 (only for use_masking=True).
             loss_type (str): Loss function type ("L1", "L2", or "L1+L2").
-            use_guided_attn_loss (bool): Whether to use guided attention loss.
+
             guided_attn_loss_sigma (float): Sigma in guided attention loss.
             guided_attn_loss_lambda (float): Lambda in guided attention loss.
 
@@ -102,10 +102,7 @@ class HQSS(AbsTTS):
         self.idim = idim
         self.odim = odim
         self.eos = idim - 1
-        self.cumulate_att_w = cumulate_att_w
-        self.reduction_factor = reduction_factor
         
-        self.use_guided_attn_loss = use_guided_attn_loss
         self.loss_type = loss_type
 
         # define activation function for the final output
@@ -126,35 +123,27 @@ class HQSS(AbsTTS):
         self.enc = Encoder(
             idim=idim,
             embed_dim=embed_dim,
-            elayers=elayers,
-            eunits=eunits,
-            econv_layers=econv_layers,
             econv_chans=econv_chans,
-            econv_filts=econv_filts,
             use_batch_norm=use_batch_norm,
-            use_residual=use_residual,
             dropout_rate=dropout_rate,
             padding_idx=padding_idx,
         )
 
+        print(f"econv {econv_chans} odom {odim}")
+
         self.dec = Decoder(
-            idim=dec_idim,
-            odim=odim,
-            adim=adim
-            dlayers=dlayers,
-            dunits=dunits,
+            econv_chans,
+            odim,
+            adim,
+            max_oseq_len=max_oseq_len,
+            batch_size=batch_size,
             prenet_layers=prenet_layers,
             prenet_units=prenet_units,
             postnet_layers=postnet_layers,
             postnet_chans=postnet_chans,
             postnet_filts=postnet_filts,
-            output_activation_fn=self.output_activation_fn,
-            cumulate_att_w=self.cumulate_att_w,
             use_batch_norm=use_batch_norm,
-            use_concate=use_concate,
             dropout_rate=dropout_rate,
-            zoneout_rate=zoneout_rate,
-            reduction_factor=reduction_factor,
         )
         self.hqss_loss = HQSSLoss(
             use_masking=use_masking,
@@ -201,13 +190,11 @@ class HQSS(AbsTTS):
         labels = F.pad(labels, [0, 1], "constant", 1.0)
 
         # forward pass
-        after_outs, before_outs, logits, att_ws = self._forward(
-            xs=xs,
-            ilens=ilens,
-            ys=ys,
-            olens=olens,
-        )
-
+        
+        hs, hlens = self.enc(xs, ilens)
+        #print(f"xs {xs.size()} ilens {ilens.size()} hs {hs.size()}")
+        after_outs, before_outs, logits = self.dec(hs, ys)
+        #print(f"after_outs {after_outs.size()} before_outs {before_outs.size()} logits {logits.size()} ys {ys.size()} labels {labels.size()}")
         # calculate loss (for HQSS we have copied all potential loss functions but we only use L1)
         l1_loss, mse_loss, bce_loss = self.hqss_loss(
             after_outs, before_outs, logits, ys, labels, olens
@@ -234,28 +221,6 @@ class HQSS(AbsTTS):
             (loss, stats, batch_size), loss.device
         )
         return loss, stats, weight
-
-    def _forward(
-        self,
-        xs: torch.Tensor,
-        ilens: torch.Tensor,
-        ys: torch.Tensor,
-        olens: torch.Tensor,
-        spembs: torch.Tensor,
-        sids: torch.Tensor,
-        lids: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    # todo - for inference
-        hs, hlens = self.enc(xs, ilens)
-        if self.spks is not None:
-            sid_embs = self.sid_emb(sids.view(-1))
-            hs = hs + sid_embs.unsqueeze(1)
-        if self.langs is not None:
-            lid_embs = self.lid_emb(lids.view(-1))
-            hs = hs + lid_embs.unsqueeze(1)
-        if self.spk_embed_dim is not None:
-            hs = self._integrate_with_spk_embed(hs, spembs)
-        return self.dec(hs, hlens, ys)
 
     def inference(
         self,

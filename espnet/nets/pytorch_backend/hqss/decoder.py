@@ -11,9 +11,9 @@ import six
 import torch
 import torch.nn.functional as F
 
-from mol_attn import MOLAttn
-from prenet import Prenet
-from postnet import Postnet
+from espnet.nets.pytorch_backend.hqss.mol_attn import MOLAttn
+from espnet.nets.pytorch_backend.hqss.prenet import Prenet
+from espnet.nets.pytorch_backend.hqss.postnet import Postnet
 
 def decoder_init(m):
     """Initialize decoder parameters."""
@@ -74,6 +74,9 @@ class Decoder(torch.nn.Module):
             n_units=dec_odim,
             dropout_rate=dropout_rate,
         )
+        #print(self.enc_odim)
+        #print(self.dec_odim)
+        #print(self.attn_dim)
 
         # define alignment attention RNN/attention layer
         self.attn = MOLAttn(self.enc_odim, self.dec_odim, self.attn_dim, batch_size)
@@ -81,6 +84,7 @@ class Decoder(torch.nn.Module):
         # define decoder RNNs 
         
         # check this? if we are concatenating context + state from attention, size will be B x (enc_odim + att_dim)
+        #print(self.attn_dim)
         self.rnns = torch.nn.LSTM(enc_odim + self.attn_dim, self.dec_odim, num_layers=2)
 
         # define postnet
@@ -119,22 +123,27 @@ class Decoder(torch.nn.Module):
             This computation is performed in teacher-forcing manner.
 
         """
+        device = enc_z.device
         batch_size = int(ys.size()[0])
         decoder_steps = int(ys.size()[1])
         
         # B x N x odim
-        after_outs_all = torch.zeros(batch_size, decoder_steps, self.dec_odim)
-        before_outs_all = torch.zeros(batch_size, decoder_steps, self.dec_odim)
-        logits_all = torch.zeros(ys.size()[0], decoder_steps)
+        after_outs_all = torch.zeros(batch_size, decoder_steps, self.dec_odim, device=device)
+        before_outs_all = torch.zeros(batch_size, decoder_steps, self.dec_odim, device=device)
+        logits_all = torch.zeros(ys.size()[0], decoder_steps, device=device)
+
+        dec_z = torch.zeros(batch_size, decoder_steps, self.dec_odim,device=device)
 
         # for every decoder step
         for i in range(decoder_steps):
+            #   print(i)
             # apply prenet to last decoder output
             # (or if the first decoder step, apply to a zero frame)
             if i == 0:
-                dec_z = self.prenet(torch.zeros(enc_z.size()[0], self.dec_odim))
+                prenet_input = torch.zeros(enc_z.size()[0], self.dec_odim, device=device)
+                dec_z[:,i,:] = self.prenet(prenet_input)
             else:
-                dec_z = self.prenet(after_outs_all[:, i-1, :])
+                dec_z[:,i,:] = self.prenet(after_outs_all[:, i-1, :])
     
             # pass:
             # - encoder outputs for all timesteps,
@@ -142,17 +151,12 @@ class Decoder(torch.nn.Module):
             # - index of current decoder timestep
             # to MOL attention layer.
             # returns context (B x enc_odim) and state (B x att_dim)
-            context, state = self.attn(enc_z, dec_z, i) 
+            context, state = self.attn(enc_z, dec_z[:,i,:], i) 
 
-            #print(context.size())
-            #print(state.size())
-
-            rnn_input = torch.cat([context, state], dim=2)
+            rnn_input = torch.cat([context, state], dim=2).to(device)
 
             # pass through downstream decoder layers
             before_outs, _ = self.rnns(rnn_input)
-
-            #print(before_outs.size())
 
             # get logits for probability of stop token
             logits = self.stop_prob(before_outs)
@@ -165,13 +169,9 @@ class Decoder(torch.nn.Module):
             # and add
             after_outs = before_outs + p_out # (B, odim, Lmax)
             
-            #print(after_outs.size())
-            #print(before_outs.size())
-            #print(logits.size())
-            #print(logits_all.size())
-            after_outs_all[:,i,:] = torch.squeeze(after_outs)
-            before_outs_all[:,i,:] = torch.squeeze(before_outs)
-            logits_all[:,i] = torch.squeeze(logits)
+            after_outs_all[:,i,:] = torch.squeeze(after_outs).to(device)
+            before_outs_all[:,i,:] = torch.squeeze(before_outs).to(device)
+            logits_all[:,i] = torch.squeeze(logits).to(device)
 
         # TODO - reduction factor? 
         # the decoder will produce r frames every step

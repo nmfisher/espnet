@@ -10,8 +10,7 @@ import six
 
 import torch
 import torch.nn.functional as F
-from prenet import Prenet
-from espnet.nets.pytorch_backend.rnn.attentions import AttForwardTA
+
 
 class Postnet(torch.nn.Module):
     """Postnet module for Spectrogram prediction network."""

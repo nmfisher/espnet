@@ -12,7 +12,8 @@ import torch
 
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.nn.utils.rnn import pad_packed_sequence
-from prenet import Prenet
+from espnet.nets.pytorch_backend.hqss.prenet import Prenet
+
 from espnet.nets.pytorch_backend.tacotron2.cbhg import CBHG
 from espnet.nets.pytorch_backend.tacotron2.cbhg import CBHGLoss
 
@@ -43,7 +44,6 @@ class Encoder(torch.nn.Module):
         prenet_layers=2,
         prenet_units=256,
         econv_chans=512,
-        econv_filts=5,
         use_batch_norm=True,
         dropout_rate=0.5,
         padding_idx=0,
@@ -55,7 +55,6 @@ class Encoder(torch.nn.Module):
             input_layer (str): Input layer type.
             embed_dim (int, optional) Dimension of character embedding.
             cbhg_layers (int, optional) The number of encoder conv layers.
-            econv_filts (int, optional) The number of encoder conv filter size.
             econv_chans (int, optional) The number of encoder conv filter channels.
             use_batch_norm (bool, optional) Whether to use batch normalization.
             dropout_rate (float, optional) Dropout rate.
@@ -93,19 +92,23 @@ class Encoder(torch.nn.Module):
             LongTensor: Batch of lengths of each sequence (B,)
 
         """
-        xs = self.embed(xs)
-        xs = self.prenet(xs)
+        xs_emb = self.embed(xs)
+
+        xs_pre = self.prenet(xs_emb)
 
         if not isinstance(ilens, torch.Tensor):
             ilens = torch.tensor(ilens)
+
+        cbhg_out = xs_pre
         
         for i in six.moves.range(len(self.convs)):
-            xs, _ = self.convs[i](xs, ilens)
-            print(xs)
+            cbhg_out, _ = self.convs[i](cbhg_out, ilens)
+            #print(f"cbhg_out {cbhg_out.size()}")
         
-        xs = pack_padded_sequence(xs.transpose(1, 2), ilens.cpu(), batch_first=True)
-        xs, hlens = pad_packed_sequence(xs, batch_first=True)
-        return xs, hlens
+        xs_cbhg = pack_padded_sequence(cbhg_out, ilens.cpu(), batch_first=True)
+        xs_cbhg, hlens = pad_packed_sequence(xs_cbhg, batch_first=True)
+        #print(f"xs_emb {xs_emb.size()} xs_pre {xs_pre} xs_cbhg {xs_cbhg.size()}")        
+        return xs_cbhg, hlens
 
     def inference(self, x):
         """Inference.
