@@ -13,6 +13,8 @@ import torch
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.nn.utils.rnn import pad_packed_sequence
 from prenet import Prenet
+from espnet.nets.pytorch_backend.tacotron2.cbhg import CBHG
+from espnet.nets.pytorch_backend.tacotron2.cbhg import CBHGLoss
 
 def encoder_init(m):
     """Initialize encoder parameters."""
@@ -37,15 +39,12 @@ class Encoder(torch.nn.Module):
         idim,
         input_layer="embed",
         embed_dim=512,
-        elayers=1,
-        eunits=512,
         cbhg_layers=3,
         prenet_layers=2,
         prenet_units=256,
         econv_chans=512,
         econv_filts=5,
         use_batch_norm=True,
-        use_residual=False,
         dropout_rate=0.5,
         padding_idx=0,
     ):
@@ -59,29 +58,23 @@ class Encoder(torch.nn.Module):
             econv_filts (int, optional) The number of encoder conv filter size.
             econv_chans (int, optional) The number of encoder conv filter channels.
             use_batch_norm (bool, optional) Whether to use batch normalization.
-            use_residual (bool, optional) Whether to use residual connection.
             dropout_rate (float, optional) Dropout rate.
-
         """
         super(Encoder, self).__init__()
         # store the hyperparameters
         self.idim = idim
-        self.use_residual = use_residual
 
         # define network layer modules
-        if input_layer == "linear":
-            self.embed = torch.nn.Linear(idim, econv_chans)
-        elif input_layer == "embed":
-            self.embed = torch.nn.Embedding(idim, embed_dim, padding_idx=padding_idx)
-        else:
-            raise ValueError("unknown input_layer: " + input_layer)
-        self.prenet = Prenet( n_layers=prenet_layers, n_units=)
-        if self.cbhg_layers == 0:
-            raise ValueError("chbg_layers == 0")
+        self.embed = torch.nn.Embedding(idim, embed_dim, padding_idx=padding_idx)
+        
+        self.prenet = Prenet(embed_dim, n_layers=prenet_layers, n_units=prenet_units)
 
         self.convs = torch.nn.ModuleList()
         for layer in six.moves.range(cbhg_layers):
-            self.convs += [ CBHG(econv_chans) ]
+            if layer == 0:
+                self.convs += [ CBHG(prenet_units, econv_chans) ]
+            else:
+                self.convs += [ CBHG(econv_chans, econv_chans) ]
 
         # initialize
         self.apply(encoder_init)
@@ -102,15 +95,14 @@ class Encoder(torch.nn.Module):
         """
         xs = self.embed(xs)
         xs = self.prenet(xs)
-        if self.convs is not None:
-            for i in six.moves.range(len(self.convs)):
-                if self.use_residual:
-                    xs += self.convs[i](xs)
-                else:
-                    xs = self.convs[i](xs)
-        
+
         if not isinstance(ilens, torch.Tensor):
             ilens = torch.tensor(ilens)
+        
+        for i in six.moves.range(len(self.convs)):
+            xs, _ = self.convs[i](xs, ilens)
+            print(xs)
+        
         xs = pack_padded_sequence(xs.transpose(1, 2), ilens.cpu(), batch_first=True)
         xs, hlens = pad_packed_sequence(xs, batch_first=True)
         return xs, hlens

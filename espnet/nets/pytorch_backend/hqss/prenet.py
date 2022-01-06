@@ -13,8 +13,7 @@ class Prenet(torch.nn.Module):
         """Initialize prenet module.
 
         Args:
-            idim (int): Dimension of the inputs.
-            odim (int): Dimension of the outputs.
+            idim (int): Dimension of the inputs & outputs
             n_layers (int, optional): The number of prenet layers.
             n_units (int, optional): The number of prenet units.
 
@@ -25,11 +24,7 @@ class Prenet(torch.nn.Module):
         for layer in six.moves.range(n_layers):
             n_inputs = idim if layer == 0 else n_units
             self.prenet += [
-                torch.nn.Sequential(
-                    torch.nn.Linear(att_dim, 1), 
-                    torch.nn.ReLU(), 
-                    torch.nn.Linear(n_inputs, n_units)
-                ) for _ in range(num_dist)
+                torch.nn.Sequential(torch.nn.Linear(n_inputs, n_units), torch.nn.ReLU())
             ]
 
     def forward(self, x):

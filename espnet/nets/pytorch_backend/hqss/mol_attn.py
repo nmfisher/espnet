@@ -79,8 +79,7 @@ class MOLAttn(torch.nn.Module):
         # during inference time, this is replaced with the predicted acoustic features passed through prenet
         
         # concatenate pre-net output with last context vector
-        print(dec_z.size())
-        print(self.c.size())
+        
         att_in = torch.unsqueeze(torch.cat([dec_z, self.c], dim=1), dim=1)
 
         # pass input and last state into RNN
@@ -91,9 +90,7 @@ class MOLAttn(torch.nn.Module):
         # apply FC nets to get params for each mixture            
         for k in range(self.num_dists):
             params = self.param_nets[k](self.h)
-            #print(params.size())
-            #print(self.means[:, k].size())
-            #print(params[:,0].size())
+            
             mean = self.means[:, k] + torch.exp(params[0,:,0])
             scale = torch.exp(params[0, :,1])
             weights[:,k] = params[0, :, 2]
@@ -110,13 +107,10 @@ class MOLAttn(torch.nn.Module):
                 f2 = self._logistic(j - 0.5, mean, scale)
 
                 a[:,j] += weights[:,k]  * (f1 - f2)
-        #print(enc_z.size())
-        #print(torch.unsqueeze(a, 2).size())
+        
         self.c = torch.sum(torch.unsqueeze(a,2) * enc_z, 1)
 
-        print(self.c.size())
-        print(self.h.size())
-        # return context vector appended to hidden state               
-        return torch.cat([torch.squeeze(self.h),self.c], 1)
+        # return context vector & hidden state               
+        return torch.unsqueeze(self.c, 0), self.h
 
 

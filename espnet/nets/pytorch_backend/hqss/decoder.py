@@ -4,14 +4,16 @@
 # Copyright 2019 Nagoya University (Tomoki Hayashi)
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 
-"""Tacotron2 decoder related modules."""
+"""HQSS decoder related modules."""
 
 import six
 
 import torch
 import torch.nn.functional as F
 
-from espnet.nets.pytorch_backend.rnn.attentions import AttForwardTA
+from mol_attn import MOLAttn
+from prenet import Prenet
+from postnet import Postnet
 
 def decoder_init(m):
     """Initialize decoder parameters."""
@@ -24,27 +26,27 @@ class Decoder(torch.nn.Module):
     """
     def __init__(
         self,
-        idim,
-        odim,
+        enc_odim,
+        dec_odim,
         adim,
-        dunits=1024,
+        max_oseq_len,
+        batch_size,
+        rnn_units=1024,
         prenet_layers=2,
         prenet_units=256,
         postnet_layers=5,
         postnet_chans=512,
         postnet_filts=5,
-        output_activation_fn=None,
         use_batch_norm=True,
-        dropout_rate=0.5,
-        reduction_factor=1,
+        dropout_rate=0.5
     ):
-        """Initialize Tacotron2 decoder module.
+        """Initialize HQSS decoder module.
 
         Args:
-            idim (int): Dimension of the inputs.
-            odim (int): Dimension of the outputs.
+            enc_odim (int): Dimension of the inputs.
+            dec_odim (int): Dimension of the outputs.
             att (torch.nn.Module): Instance of attention class.
-            dunits (int, optional): The number of decoder RNN units.
+            rnn_units (int, optional): The number of decoder RNN units.
             prenet_layers (int, optional): The number of prenet layers.
             prenet_units (int, optional): The number of prenet units.
             postnet_layers (int, optional): The number of postnet layers.
@@ -60,62 +62,50 @@ class Decoder(torch.nn.Module):
         super(Decoder, self).__init__()
 
         # store the hyperparameters
-        self.idim = idim
-        self.odim = odim
-        
-        self.output_activation_fn = output_activation_fn
-        self.reduction_factor = reduction_factor
-
-        # check attention type
-        if isinstance(self.att, AttForwardTA):
-            self.use_att_extra_inputs = True
-        else:
-            self.use_att_extra_inputs = False
+        self.enc_odim = enc_odim
+        self.dec_odim = dec_odim
+        self.attn_dim = adim
+        self.rnn_units = rnn_units
 
         # define prenet
         self.prenet = Prenet(
-            idim=odim,
+            dec_odim,
             n_layers=prenet_layers,
-            n_units=odim,
+            n_units=dec_odim,
             dropout_rate=dropout_rate,
         )
 
         # define alignment attention RNN/attention layer
-        self.attn = MOLAttn(att_dim, att_hidden_size)
-        
+        self.attn = MOLAttn(self.enc_odim, self.dec_odim, self.attn_dim, batch_size)
+
         # define decoder RNNs 
-        self.rnns = torch.nn.LSTM(att_dim, att_dim, num_layers=2)
+        
+        # check this? if we are concatenating context + state from attention, size will be B x (enc_odim + att_dim)
+        self.rnns = torch.nn.LSTM(enc_odim + self.attn_dim, self.dec_odim, num_layers=2)
 
         # define postnet
-        if postnet_layers > 0:
-            self.postnet = Postnet(
-                idim=idim,
-                odim=odim,
-                n_layers=postnet_layers,
-                n_chans=postnet_chans,
-                n_filts=postnet_filts,
-                use_batch_norm=use_batch_norm,
-                dropout_rate=dropout_rate,
-            )
-        else:
-            self.postnet = None
-
-        # define projection layers
-        iunits = idim + dunits if use_concate else dunits
-        self.feat_out = torch.nn.Linear(iunits, odim * reduction_factor, bias=False)
+        self.postnet = Postnet(
+            enc_odim,
+            self.dec_odim,
+            n_layers=postnet_layers,
+            n_chans=postnet_chans,
+            n_filts=postnet_filts,
+            use_batch_norm=use_batch_norm,
+            dropout_rate=dropout_rate,
+        )
         
         # FC for stop-token logits 
-        self.prob_out = torch.nn.Linear(iunits, reduction_factor)
+        # input will be 
+        self.stop_prob = torch.nn.Linear(self.dec_odim, 1)
 
         # initialize
         self.apply(decoder_init)
 
-    def forward(self, enc_z, hlens, ys):
+    def forward(self, enc_z, ys):
         """Calculate forward propagation.
 
         Args:
-            enc_z (Tensor): Batch of the sequences of encoder output (B, Tmax, idim).
-            hlens (LongTensor): Batch of lengths of each input batch (B,).
+            enc_z (Tensor): Batch of the sequences of encoder output (B, Tmax, enc_odim).
             ys (Tensor):
                 Batch of the sequences of padded target features (B, Lmax, odim).
 
@@ -129,21 +119,20 @@ class Decoder(torch.nn.Module):
             This computation is performed in teacher-forcing manner.
 
         """
-        # length list should be list of int
-        hlens = list(map(int, hlens))
-
+        batch_size = int(ys.size()[0])
         decoder_steps = int(ys.size()[1])
-        before_outs_all = []
+        
         # B x N x odim
-        after_outs_all = torch.zeros(ys.size())
-        logits_all = []
+        after_outs_all = torch.zeros(batch_size, decoder_steps, self.dec_odim)
+        before_outs_all = torch.zeros(batch_size, decoder_steps, self.dec_odim)
+        logits_all = torch.zeros(ys.size()[0], decoder_steps)
 
         # for every decoder step
         for i in range(decoder_steps):
             # apply prenet to last decoder output
             # (or if the first decoder step, apply to a zero frame)
             if i == 0:
-                dec_z = self.prenet(torch.zeros(ys.size()[0], ys.size()[1]))
+                dec_z = self.prenet(torch.zeros(enc_z.size()[0], self.dec_odim))
             else:
                 dec_z = self.prenet(after_outs_all[:, i-1, :])
     
@@ -152,22 +141,37 @@ class Decoder(torch.nn.Module):
             # - pre-net output, and
             # - index of current decoder timestep
             # to MOL attention layer.
-            # returns B x 1 x odim
-            before_outs = self.mol_attn(enc_z, dec_z, i) 
+            # returns context (B x enc_odim) and state (B x att_dim)
+            context, state = self.attn(enc_z, dec_z, i) 
+
+            #print(context.size())
+            #print(state.size())
+
+            rnn_input = torch.cat([context, state], dim=2)
 
             # pass through downstream decoder layers
-            # returns B x 1 x odim
-            before_outs = self.rnns(before_outs)
+            before_outs, _ = self.rnns(rnn_input)
+
+            #print(before_outs.size())
 
             # get logits for probability of stop token
             logits = self.stop_prob(before_outs)
-        
-            # run through postnet and add
-            after_outs = before_outs + self.postnet(before_outs)  # (B, odim, Lmax)
 
-            after_outs_all[:,i,:] = after_outs 
-            before_outs_all[:,i,:] = [ before_outs ]
-            logits_all[:,i,:] = [ logits ]
+            before_outs = torch.transpose(before_outs, 0,1)
+            before_outs = torch.transpose(before_outs, 1,2)
+        
+            # run through postnet
+            p_out = self.postnet(before_outs)
+            # and add
+            after_outs = before_outs + p_out # (B, odim, Lmax)
+            
+            #print(after_outs.size())
+            #print(before_outs.size())
+            #print(logits.size())
+            #print(logits_all.size())
+            after_outs_all[:,i,:] = torch.squeeze(after_outs)
+            before_outs_all[:,i,:] = torch.squeeze(before_outs)
+            logits_all[:,i] = torch.squeeze(logits)
 
         # TODO - reduction factor? 
         # the decoder will produce r frames every step
@@ -319,7 +323,7 @@ class Decoder(torch.nn.Module):
         """Calculate all of the attention weights.
 
         Args:
-            enc_z (Tensor): Batch of the sequences of padded hidden states (B, Tmax, idim).
+            enc_z (Tensor): Batch of the sequences of padded hidden states (B, Tmax, enc_odim).
             hlens (LongTensor): Batch of lengths of each input batch (B,).
             ys (Tensor):
                 Batch of the sequences of padded target features (B, Lmax, odim).
@@ -335,8 +339,6 @@ class Decoder(torch.nn.Module):
         if self.reduction_factor > 1:
             ys = ys[:, self.reduction_factor - 1 :: self.reduction_factor]
 
-        # length list should be list of int
-        hlens = list(map(int, hlens))
 
         # initialize hidden states of decoder
         c_list = [self._zero_state(enc_z)]
