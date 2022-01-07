@@ -15,7 +15,7 @@ class MOLAttn(torch.nn.Module):
     """
 
     def __init__(
-        self, enc_odim, dec_odim, att_dim, batch_size, num_dists=5, frames_per_step=5
+        self, enc_odim, dec_odim, att_dim, num_dists=5, frames_per_step=5
     ):
         super(MOLAttn, self).__init__()
         
@@ -27,7 +27,6 @@ class MOLAttn(torch.nn.Module):
         self.dec_odim = dec_odim
         self.frames_per_step = frames_per_step
         self.num_dists = num_dists
-        self.batch_size = batch_size
         
         # fully-connected layer for predicting logistic distribution parameters
         # mean/scale/mixture weight
@@ -41,14 +40,14 @@ class MOLAttn(torch.nn.Module):
         ]        
 
     def _logistic(self, x, mean, scale):
-        return 1 / (1 + torch.exp(-(x - mean / scale)))
+        return (1 / (1 + torch.exp((x - mean) / scale))) + 1e-6
 
-    def _reset(self, device):
+    def _reset(self, device, batch_size):
         # randomize initial hidden state (? check this)
-        self.h = torch.randn(1, self.batch_size, self.att_dim, device=device)
-        self.c = torch.zeros(self.batch_size, self.enc_odim, device=device)
+        self.h = torch.randn(1, batch_size, self.att_dim, device=device, requires_grad=True)
+        self.c = torch.zeros(batch_size, self.enc_odim, device=device, requires_grad=True)
         # create placeholder for means of logistic distributions
-        self.means = torch.zeros(self.batch_size, self.num_dists, device=device)
+        self.means = []
 
     def forward(
         self,
@@ -65,11 +64,14 @@ class MOLAttn(torch.nn.Module):
         :return: concatenated context + hidden state (B x N x D_dec)
         :rtype: torch.Tensor
         """
-        device = enc_z.device
-        if i == 0:
-            self._reset(device)
+        torch.autograd.set_detect_anomaly(True)
 
+        device = enc_z.device
+        batch_size = enc_z.size()[0]
         enc_seq_len = enc_z.size()[1]
+        
+        if i == 0:
+            self._reset(device, batch_size)        
 
         # create placeholder for output i.e. (concatenated context + hidden state) that will be fed to downstream decoders
         # B x N x (DX2) (where D is the dimension of the context/hidden vectors)
@@ -81,42 +83,52 @@ class MOLAttn(torch.nn.Module):
         # during inference time, this is replaced with the predicted acoustic features passed through prenet
         
         # concatenate pre-net output with last context vector
-        #print(dec_z.size())
-        #print(self.c.size())
+        
         att_in = torch.unsqueeze(torch.cat([dec_z, self.c], dim=1), dim=1).to(device)
 
         # pass input and last state into RNN
         o_i,self.h = self.rnn(att_in, self.h)
 
-        weights = torch.zeros((self.batch_size, self.num_dists), device=device)
+        weights = []
+        scales = []
+        dec_step_means = []
 
         # apply FC nets to get params for each mixture            
         for k in range(self.num_dists):
             param_net = self.param_nets[k].to(device)
             params = param_net(self.h)
             
-            mean = self.means[:, k] + torch.exp(params[0,:,0])
-            scale = torch.exp(params[0, :,1])
-            weights[:,k] = params[0, :, 2]
+            dec_step_means += [ torch.exp(params[0,:,0]) + self.means[-1][k] if i > 0 else torch.exp(params[0,:,0]) ]
             
-        weights = torch.nn.functional.softmax(weights, dim=1)
+            scales += [ torch.exp(params[0,:,1]) ]
+            
+            weights += params[0,:, 2]
+        
+        self.means += [ dec_step_means ]
+        weights = torch.Tensor(weights)
+        
+        weights = torch.nn.functional.softmax(torch.Tensor(weights), dim=0)
 
-        torch.autograd.set_detect_anomaly(True)
         
         # placeholder tensor for encoder timestep probabilities
-        a = torch.zeros(self.batch_size, enc_seq_len).to(device)
+        a = torch.zeros(batch_size, enc_seq_len, requires_grad=True).to(device)
         
         for k in range(self.num_dists):
+            mean = self.means[-1][k]
+            scale = scales[k]
+            weight = weights[k]
+            
             # calculate alignment probabilities for each encoder timestep
             for j in range(enc_seq_len):
                 f1 = self._logistic(j + 0.5,  mean, scale)
                 f2 = self._logistic(j - 0.5, mean, scale)
 
-                a[:,j] += weights[:,k]  * (f1 - f2)
+                a[:,j] += weights[k] * (f1 - f2)
+        a = torch.unsqueeze(a,2)
         
-        self.c = torch.sum(torch.unsqueeze(a,2).to(device) * enc_z, 1).to(device)
+        self.c = torch.sum(a * enc_z, 1).to(device)
 
         # return context vector & hidden state               
-        return torch.unsqueeze(self.c, 0).to(device), self.h
+        return torch.unsqueeze(self.c, 0).to(device), self.h, weights
 
 

@@ -71,10 +71,15 @@ class HQSSLoss(torch.nn.Module):
             Tensor: Binary cross entropy loss value.
 
         """
+        
         # make mask and apply it
         if self.use_masking:
             masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
             ys = ys.masked_select(masks)
+            #print(masks.size())
+            #print(after_outs.size())
+            #print(before_outs.size())
+            #print(logits.size())
             after_outs = after_outs.masked_select(masks)
             before_outs = before_outs.masked_select(masks)
             labels = labels.masked_select(masks[:, :, 0])
@@ -85,6 +90,8 @@ class HQSSLoss(torch.nn.Module):
         mse_loss = self.mse_criterion(after_outs, ys) + self.mse_criterion(
             before_outs, ys
         )
+        #print(logits.size())
+        #print(labels.size())
         bce_loss = self.bce_criterion(logits, labels)
 
         # make weighted mask and apply it

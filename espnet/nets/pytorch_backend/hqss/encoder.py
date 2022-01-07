@@ -40,7 +40,7 @@ class Encoder(torch.nn.Module):
         idim,
         input_layer="embed",
         embed_dim=512,
-        cbhg_layers=3,
+        cbhg_layers=1,
         prenet_layers=2,
         prenet_units=256,
         econv_chans=512,
@@ -103,11 +103,10 @@ class Encoder(torch.nn.Module):
         
         for i in six.moves.range(len(self.convs)):
             cbhg_out, _ = self.convs[i](cbhg_out, ilens)
-            #print(f"cbhg_out {cbhg_out.size()}")
         
         xs_cbhg = pack_padded_sequence(cbhg_out, ilens.cpu(), batch_first=True)
         xs_cbhg, hlens = pad_packed_sequence(xs_cbhg, batch_first=True)
-        #print(f"xs_emb {xs_emb.size()} xs_pre {xs_pre} xs_cbhg {xs_cbhg.size()}")        
+
         return xs_cbhg, hlens
 
     def inference(self, x):

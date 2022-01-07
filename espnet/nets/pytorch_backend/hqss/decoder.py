@@ -29,7 +29,6 @@ class Decoder(torch.nn.Module):
         enc_odim,
         dec_odim,
         adim,
-        max_oseq_len,
         batch_size,
         rnn_units=1024,
         prenet_layers=2,
@@ -74,17 +73,14 @@ class Decoder(torch.nn.Module):
             n_units=dec_odim,
             dropout_rate=dropout_rate,
         )
-        #print(self.enc_odim)
-        #print(self.dec_odim)
-        #print(self.attn_dim)
 
         # define alignment attention RNN/attention layer
-        self.attn = MOLAttn(self.enc_odim, self.dec_odim, self.attn_dim, batch_size)
+        self.attn = MOLAttn(self.enc_odim, self.dec_odim, self.attn_dim)
 
         # define decoder RNNs 
         
         # check this? if we are concatenating context + state from attention, size will be B x (enc_odim + att_dim)
-        #print(self.attn_dim)
+        
         self.rnns = torch.nn.LSTM(enc_odim + self.attn_dim, self.dec_odim, num_layers=2)
 
         # define postnet
@@ -128,50 +124,56 @@ class Decoder(torch.nn.Module):
         decoder_steps = int(ys.size()[1])
         
         # B x N x odim
-        after_outs_all = torch.zeros(batch_size, decoder_steps, self.dec_odim, device=device)
-        before_outs_all = torch.zeros(batch_size, decoder_steps, self.dec_odim, device=device)
-        logits_all = torch.zeros(ys.size()[0], decoder_steps, device=device)
+        after_outs_all = [] #torch.zeros(batch_size, decoder_steps, self.dec_odim, device=device)
+        before_outs_all = [] # torch.zeros(batch_size, decoder_steps, self.dec_odim, device=device)
+        logits_all = [] #torch.zeros(ys.size()[0], decoder_steps, device=device)
 
-        dec_z = torch.zeros(batch_size, decoder_steps, self.dec_odim,device=device)
-
+        #dec_z = torch.zeros(batch_size, decoder_steps, self.dec_odim,device=device)
+        rnn_c = torch.zeros(2, batch_size,  self.dec_odim, device=device)
+        rnn_s = torch.zeros(2, batch_size, self.dec_odim, device=device)
         # for every decoder step
         for i in range(decoder_steps):
-            #   print(i)
             # apply prenet to last decoder output
             # (or if the first decoder step, apply to a zero frame)
             if i == 0:
                 prenet_input = torch.zeros(enc_z.size()[0], self.dec_odim, device=device)
-                dec_z[:,i,:] = self.prenet(prenet_input)
             else:
-                dec_z[:,i,:] = self.prenet(after_outs_all[:, i-1, :])
-    
+                prenet_input = torch.squeeze(after_outs_all[i-1], 1)
+
+            prenet_output = self.prenet(prenet_input)
+
             # pass:
             # - encoder outputs for all timesteps,
             # - pre-net output, and
             # - index of current decoder timestep
             # to MOL attention layer.
-            # returns context (B x enc_odim) and state (B x att_dim)
-            context, state = self.attn(enc_z, dec_z[:,i,:], i) 
+            # returns context (B x enc_odim) and state (B x att_dim)    
+            context, state, attn_w = self.attn(enc_z, prenet_output, i) 
 
             rnn_input = torch.cat([context, state], dim=2).to(device)
+            #rnn_c = context
+            #rnn_s = state
 
             # pass through downstream decoder layers
-            before_outs, _ = self.rnns(rnn_input)
+            before_outs, (rnn_c, rnn_s) = self.rnns(rnn_input, (rnn_c, rnn_s))
+
+
 
             # get logits for probability of stop token
             logits = self.stop_prob(before_outs)
 
             before_outs = torch.transpose(before_outs, 0,1)
             before_outs = torch.transpose(before_outs, 1,2)
-        
+
             # run through postnet
-            p_out = self.postnet(before_outs)
-            # and add
-            after_outs = before_outs + p_out # (B, odim, Lmax)
+            #p_out = self.postnet(before_outs)
             
-            after_outs_all[:,i,:] = torch.squeeze(after_outs).to(device)
-            before_outs_all[:,i,:] = torch.squeeze(before_outs).to(device)
-            logits_all[:,i] = torch.squeeze(logits).to(device)
+            # and add
+            after_outs = before_outs # + p_out # (B, odim, Lmax)
+            
+            after_outs_all += [ after_outs.transpose(1,2).to(device) ]
+            before_outs_all += [ before_outs.transpose(1,2) ]
+            logits_all += [ torch.squeeze(logits, 0) ]
 
         # TODO - reduction factor? 
         # the decoder will produce r frames every step
@@ -181,14 +183,14 @@ class Decoder(torch.nn.Module):
         # add a zero frame for the very first decoder step
         #attn_acoustic_inputs = torch.cat([torch.zeros(batch_size, dec_z.size()[2]), dec_z[:, ::decoder_steps]
 
-        return after_outs_all, before_outs_all, logits_all
+        return torch.cat(after_outs_all, dim=1).to(device), torch.cat(before_outs_all, dim=1).to(device), torch.cat(logits_all, dim=1).to(device)
 
     def inference(
         self,
         h,
         threshold=0.5,
         minlenratio=0.0,
-        maxlenratio=10.0,
+        maxlenratio=50.0,
         use_att_constraint=False,
         backward_window=None,
         forward_window=None,
@@ -204,11 +206,6 @@ class Decoder(torch.nn.Module):
             minlenratio (float, optional): Minimum length ratio.
                 If set to 10 and the length of input is 10,
                 the maximum length of outputs will be 10 * 10 = 100.
-            use_att_constraint (bool):
-                Whether to apply attention constraint introduced in `Deep Voice 3`_.
-            backward_window (int): Backward window size in attention constraint.
-            forward_window (int): Forward window size in attention constraint.
-
         Returns:
             Tensor: Output sequence of features (L, odim).
             Tensor: Output sequence of stop probabilities (L,).
@@ -222,102 +219,54 @@ class Decoder(torch.nn.Module):
         """
         # setup
         assert len(h.size()) == 2
+        device = h.device
         enc_z = h.unsqueeze(0)
         ilens = [h.size(0)]
         maxlen = int(h.size(0) * maxlenratio)
-        minlen = int(h.size(0) * minlenratio)
-
-        # initialize hidden states of decoder
-        c_list = [self._zero_state(enc_z)]
-        z_list = [self._zero_state(enc_z)]
-        for _ in six.moves.range(1, len(self.lstm)):
-            c_list += [self._zero_state(enc_z)]
-            z_list += [self._zero_state(enc_z)]
-        prev_out = enc_z.new_zeros(1, self.odim)
-
-        # initialize attention
-        prev_att_w = None
-        self.att.reset()
-
-        # setup for attention constraint
-        if use_att_constraint:
-            last_attended_idx = 0
-        else:
-            last_attended_idx = None
+        minlen = int(h.size(0) * minlenratio)    
 
         # loop for an output sequence
-        idx = 0
-        outs, att_ws, probs = [], [], []
+        i = 0
+        outs = []
         while True:
-            # updated index
-            idx += self.reduction_factor
+            # initialize hidden states of decoder
+            if i == 0:
+                prenet_input = torch.zeros(enc_z.size()[0], self.dec_odim, device=device)
+            else:
+                prenet_input = torch.squeeze(outs[i-1], dim=1)
+
+            #idx += self.reduction_factor
+
+            prenet_output = self.prenet(prenet_input)
 
             # decoder calculation
-            if self.use_att_extra_inputs:
-                att_c, att_w = self.att(
-                    enc_z,
-                    ilens,
-                    z_list[0],
-                    prev_att_w,
-                    prev_out,
-                    last_attended_idx=last_attended_idx,
-                    backward_window=backward_window,
-                    forward_window=forward_window,
-                )
-            else:
-                att_c, att_w = self.att(
-                    enc_z,
-                    ilens,
-                    z_list[0],
-                    prev_att_w,
-                    last_attended_idx=last_attended_idx,
-                    backward_window=backward_window,
-                    forward_window=forward_window,
-                )
+            context, state, attn_w = self.attn(enc_z, prenet_output, i) 
 
-            att_ws += [att_w]
-            prenet_out = self.prenet(prev_out) if self.prenet is not None else prev_out
-            enc_z = torch.cat([att_c, prenet_out], dim=1)
-            z_list[0], c_list[0] = self.lstm[0](enc_z, (z_list[0], c_list[0]))
-            for i in six.moves.range(1, len(self.lstm)):
-                z_list[i], c_list[i] = self.lstm[i](
-                    z_list[i - 1], (z_list[i], c_list[i])
-                )
-            zcs = (
-                torch.cat([z_list[-1], att_c], dim=1)
-                if self.use_concate
-                else z_list[-1]
-            )
-            outs += [self.feat_out(zcs).view(1, self.odim, -1)]  # [(1, odim, r), ...]
-            probs += [torch.sigmoid(self.prob_out(zcs))[0]]  # [(r), ...]
-            if self.output_activation_fn is not None:
-                prev_out = self.output_activation_fn(outs[-1][:, :, -1])  # (1, odim)
-            else:
-                prev_out = outs[-1][:, :, -1]  # (1, odim)
-            if self.cumulate_att_w and prev_att_w is not None:
-                prev_att_w = prev_att_w + att_w  # Note: error when use +=
-            else:
-                prev_att_w = att_w
-            if use_att_constraint:
-                last_attended_idx = int(att_w.argmax())
+            rnn_input = torch.cat([context, state], dim=2).to(device)
 
+            # pass through downstream decoder layers
+            before_outs, _ = self.rnns(rnn_input)
+
+            # get logits for probability of stop token
+            stop_prob = torch.sigmoid(self.stop_prob(before_outs))
+
+            before_outs = torch.transpose(before_outs, 0,1)
+            #before_outs = torch.transpose(before_outs, 1,2)
+
+            outs += torch.unsqueeze(before_outs, dim=0)
+
+            # update decoder step
+            i += 1
+            
             # check whether to finish generation
-            if int(sum(probs[-1] >= threshold)) > 0 or idx >= maxlen:
+            if int(stop_prob) > 0 or i >= maxlen:
                 # check mininum length
-                if idx < minlen:
+                if i < minlen:
                     continue
-                outs = torch.cat(outs, dim=2)  # (1, odim, L)
-                if self.postnet is not None:
-                    outs = outs + self.postnet(outs)  # (1, odim, L)
-                outs = outs.transpose(2, 1).squeeze(0)  # (L, odim)
-                probs = torch.cat(probs, dim=0)
-                att_ws = torch.cat(att_ws, dim=0)
-                break
+                
+                return torch.squeeze(torch.cat(outs, 1)), attn_w
+            
 
-        if self.output_activation_fn is not None:
-            outs = self.output_activation_fn(outs)
-
-        return outs, probs, att_ws
 
     def calculate_all_attentions(self, enc_z, hlens, ys):
         """Calculate all of the attention weights.
