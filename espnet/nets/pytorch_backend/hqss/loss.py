@@ -26,7 +26,7 @@ class HQSSLoss(torch.nn.Module):
     """Loss function module for HQSS."""
 
     def __init__(
-        self, use_masking=True, use_weighted_masking=False, bce_pos_weight=20.0
+        self, use_masking=False, use_weighted_masking=False, bce_pos_weight=20.0
     ):
         """Initialize HQSS loss module.
 
@@ -45,7 +45,7 @@ class HQSSLoss(torch.nn.Module):
 
         # define criterions
         reduction = "none" if self.use_weighted_masking else "mean"
-        self.l1_criterion = torch.nn.L1Loss(reduction=reduction)
+        self.l1_criterion = torch.nn.L1Loss()
         self.mse_criterion = torch.nn.MSELoss(reduction=reduction)
         self.bce_criterion = torch.nn.BCEWithLogitsLoss(
             reduction=reduction, pos_weight=torch.tensor(bce_pos_weight)
@@ -54,7 +54,7 @@ class HQSSLoss(torch.nn.Module):
         # NOTE(kan-bayashi): register pre hook function for the compatibility
         self._register_load_state_dict_pre_hook(self._load_state_dict_pre_hook)
 
-    def forward(self, after_outs, before_outs, logits, ys, labels, olens):
+    def forward(self, after_outs, before_outs, ys, logits, labels):
         """Calculate forward propagation.
 
         Args:
@@ -71,44 +71,13 @@ class HQSSLoss(torch.nn.Module):
             Tensor: Binary cross entropy loss value.
 
         """
-        
-        # make mask and apply it
-        if self.use_masking:
-            masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
-            ys = ys.masked_select(masks)
-            #print(masks.size())
-            #print(after_outs.size())
-            #print(before_outs.size())
-            #print(logits.size())
-            after_outs = after_outs.masked_select(masks)
-            before_outs = before_outs.masked_select(masks)
-            labels = labels.masked_select(masks[:, :, 0])
-            logits = logits.masked_select(masks[:, :, 0])
-
         # calculate loss
         l1_loss = self.l1_criterion(after_outs, ys) + self.l1_criterion(before_outs, ys)
         mse_loss = self.mse_criterion(after_outs, ys) + self.mse_criterion(
             before_outs, ys
         )
-        #print(logits.size())
-        #print(labels.size())
+        
         bce_loss = self.bce_criterion(logits, labels)
-
-        # make weighted mask and apply it
-        if self.use_weighted_masking:
-            masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
-            weights = masks.float() / masks.sum(dim=1, keepdim=True).float()
-            out_weights = weights.div(ys.size(0) * ys.size(2))
-            logit_weights = weights.div(ys.size(0))
-
-            # apply weight
-            l1_loss = l1_loss.mul(out_weights).masked_select(masks).sum()
-            mse_loss = mse_loss.mul(out_weights).masked_select(masks).sum()
-            bce_loss = (
-                bce_loss.mul(logit_weights.squeeze(-1))
-                .masked_select(masks.squeeze(-1))
-                .sum()
-            )
 
         return l1_loss, mse_loss, bce_loss
 

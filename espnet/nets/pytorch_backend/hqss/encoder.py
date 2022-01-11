@@ -65,7 +65,7 @@ class Encoder(torch.nn.Module):
 
         # define network layer modules
         self.embed = torch.nn.Embedding(idim, embed_dim, padding_idx=padding_idx)
-        
+        prenet_units = 512
         self.prenet = Prenet(embed_dim, n_layers=prenet_layers, n_units=prenet_units)
 
         self.convs = torch.nn.ModuleList()
@@ -104,7 +104,7 @@ class Encoder(torch.nn.Module):
         for i in six.moves.range(len(self.convs)):
             cbhg_out, _ = self.convs[i](cbhg_out, ilens)
         
-        xs_cbhg = pack_padded_sequence(cbhg_out, ilens.cpu(), batch_first=True)
+        xs_cbhg = pack_padded_sequence(cbhg_out, ilens.cpu(), batch_first=True, enforce_sorted=False)
         xs_cbhg, hlens = pad_packed_sequence(xs_cbhg, batch_first=True)
 
         return xs_cbhg, hlens
@@ -122,5 +122,5 @@ class Encoder(torch.nn.Module):
         """
         xs = x.unsqueeze(0)
         ilens = torch.tensor([x.size(0)])
-
+        
         return self.forward(xs, ilens)[0][0]

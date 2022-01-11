@@ -26,24 +26,41 @@ class MOLAttn(torch.nn.Module):
         self.output_dim = output_dim
         self.frames_per_step = frames_per_step
         self.num_dists = num_dists
-        self.rnn_input_dim = 512
 
-        self.rnn = torch.nn.GRU(self.rnn_input_dim, att_dim, batch_first=True)
+        self.rnn = torch.nn.GRU(256,256)
 
+        self.proj = torch.nn.Sequential(
+            torch.nn.Linear(256, 256),
+            torch.nn.ReLU(),
+            torch.nn.Linear(256, 256),
+        )
         
         # fully-connected layer for predicting logistic distribution parameters
         # mean/scale/mixture weight
         # accepts hidden state of B x S x HS
         # outputs B x S x 
-        self.param_nets = [ torch.nn.Sequential(
-                torch.nn.Linear(self.att_dim, 256), 
+        self.mean_net = torch.nn.Sequential(
+                torch.nn.Linear(256, 256), 
                 torch.nn.Tanh(),
-                torch.nn.Linear(256, 3), 
-            ) for k in range(self.num_dists) 
-        ]        
+                torch.nn.Linear(256, self.num_dists)
+            ) 
 
+        self.scale_net = torch.nn.Sequential(
+                torch.nn.Linear(256, 256), 
+                torch.nn.Tanh(),
+                torch.nn.Linear(256, self.num_dists)
+            ) 
+
+        self.weight_net = torch.nn.Sequential(
+                torch.nn.Linear(256, 256), 
+                torch.nn.Tanh(),
+                torch.nn.Linear(256, self.num_dists)
+            ) 
+   
     def _logistic(self, x, mean, scale):
-        return (1 / (1 + torch.exp((x - mean) / scale))) + 1e-6
+      return torch.nn.functional.sigmoid((x - mean) / scale)
+      #denom =  1 + torch.exp(-(torch.div((x - mean), scale, rounding_mode="trunc" )))
+      #return 1 / denom
 
     def forward(
         self,
@@ -53,29 +70,49 @@ class MOLAttn(torch.nn.Module):
         reset=False
     ):
         """Calculate AttLoc forward propagation.
-        :param torch.Tensor enc_z: encoder outputs (B x N x D_dec)
-        :param torch.Tensor dec_z: last acoustic frame output (processed by decoder pre-net) (B x  D_dec)
+        :param torch.Tensor input: last acoustic frame
         :param int i: decoder step        
         :return: concatenated context + hidden state (B x N x D_dec)
         :rtype: torch.Tensor
         """
         torch.autograd.set_detect_anomaly(True)
-        if reset:
-          self.means = []
-        #print(f"input {input.size()}")        
-        out, self.state = self.rnn(input.to(device), None if reset else self.state)
         
-        #print(f"input {input.size()} out {out.size()} selfstate {self.state.size()}")
+        out, self.state  = self.rnn(input, self.state if reset == False else None)
 
-        # create placeholder for output i.e. (concatenated context + hidden state) that will be fed to downstream decoders
-        # B x N x (DX2) (where D is the dimension of the context/hidden vectors)
+        #param_in = torch.cat([out, self.state], dim=2)
+        param_in = self.proj(out)
+
+        # applies FFN to get MoL params
+        # returned tensor will be B x (num_dist * 3), so we reshape to B x num_dist x 3
+        # 0 is mean, 1 is scale, 2 is weight
         
-        # pass input and hidden state to RNN
-        # returns new context vector and hidden state for this timestep
-        # during training, the input on the first decoder step will simply be a zero frame
-        # subequent steps will use the nth decoder pre-net output frame  (i.e. acoustic features passed through pre-net) with the last context vector
-        # during inference time, this is replaced with the predicted acoustic features passed through prenet
-      
+        if reset == True:
+          means = torch.exp(self.mean_net(param_in)) 
+        else:
+          means = torch.exp(self.mean_net(param_in)) + self.means 
+        
+        self.means = means
+
+        scales = torch.exp(self.scale_net(param_in)) 
+        weights = torch.exp(self.weight_net(param_in)) 
+
+        weights = torch.nn.functional.softmax(weights, dim=1)
+
+        alignment_probs = []
+        for j in range(enc_seq_len):
+            f1 = self._logistic(j + 0.5, means, scales)
+            f2 = self._logistic(j - 0.5, means, scales)
+            alignment_probs += [ weights * (f1 - f2) ]
+        
+        alignment_probs = torch.cat(alignment_probs,dim=1)
+        alignment_probs = torch.sum(alignment_probs, 2)
+        
+        #alignment_probs = torch.nn.functional.softmax(alignment_probs,dim=1)
+        
+        alignment_probs = torch.unsqueeze(alignment_probs,2)
+
+        return alignment_probs, None,None
+        
         weights = []
         scales = []
 
