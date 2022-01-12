@@ -12,8 +12,7 @@ import torch
 import torch.nn.functional as F
 
 from espnet.nets.pytorch_backend.hqss.mol_attn2 import MOLAttn
-from espnet.nets.pytorch_backend.hqss.prenet import Prenet
-from espnet.nets.pytorch_backend.hqss.postnet import Postnet
+from espnet.nets.pytorch_backend.hqss.zoneout import ZoneOutCell
 
 
 def decoder_init(m):
@@ -39,7 +38,8 @@ class Decoder(torch.nn.Module):
         postnet_chans=512,
         postnet_filts=5,
         use_batch_norm=True,
-        dropout_rate=0.5
+        dropout_rate=0.5,
+        zoneout_rate=0.1
     ):
         """Initialize HQSS decoder module.
 
@@ -68,16 +68,26 @@ class Decoder(torch.nn.Module):
         self.adim = adim
 
         self.proj_in = torch.nn.Sequential(
-            torch.nn.Linear(80, 256),
+            torch.nn.Linear(80, 512),
             torch.nn.ReLU(),
+            torch.nn.Linear(512, 512),
         )
+        self.attention_rnn = torch.nn.GRU(768, 512, batch_first=True)
+        self.attn = MOLAttn(512, 512, self.adim)
 
-        self.attn = MOLAttn(256, self.dec_odim, self.adim)
+        self.residual_decoders = torch.nn.LSTM(768, 512, num_layers=1, batch_first=True)
 
-        self.rnns = torch.nn.LSTM(336, 512, num_layers=2, batch_first=True)
+        #self.zoneout = ZoneOutCell(self.residual_decoders, zoneout_rate)
+
         self.proj_out = torch.nn.Sequential(
             torch.nn.Linear(512, self.dec_odim),
-            torch.nn.ReLU())
+            torch.nn.ReLU(),
+            torch.nn.Linear(self.dec_odim, self.dec_odim),
+            #torch.nn.Linear(256, 512),
+            #  torch.nn.ReLU(),
+            #torch.nn.Linear(512, self.dec_odim),
+        )
+        #self.proj_out = torch.nn.Linear(256, self.dec_odim)
 
         # FC for stop-token logits
         self.stop_prob = torch.nn.Sequential(torch.nn.Linear(self.dec_odim, 1))
@@ -112,25 +122,25 @@ class Decoder(torch.nn.Module):
 
         logits_all = []
 
-        last_proj = torch.zeros(batch_size, 1, 80).to(device)
-        
+        output = torch.zeros(batch_size, 1, 512).to(device)
+        context = torch.zeros(batch_size, 1, 256).to(device)
+        state = torch.zeros(1,batch_size, 512).to(device)
+
         # for every decoder step
         weights = []
         for i in range(decoder_steps):
-            attn_proj = self.proj_in(last_proj)
-            attn_probs, attn_state, step_weights = self.attn(
-             attn_proj, device=enc_z.device, enc_seq_len=enc_z.size()[1], reset=i == 0)
-            weights += [ attn_probs ]
+            input = torch.cat([output, context], 2)
             
-            weighted_enc = attn_probs * enc_z
+            output, state = self.attention_rnn(input, state)
 
-            context = torch.unsqueeze(torch.sum(weighted_enc, dim=1), 1)
-            
-            input = torch.cat([last_proj, context], dim=2)
+            context, _, _ = self.attn(state, enc_z, device=enc_z.device)
 
-            last, (c, s) = self.rnns(input, (c, s) if i > 0 else None)
-            
-            last_proj = self.proj_out(last)
+            residual_input = torch.cat([context, state.transpose(0,1)], 2)
+
+            residual_out, (self.residual_c, self.residual_s) = self.residual_decoders(
+                residual_input, (self.residual_c, self.residual_s) if i > 0 else None)
+
+            last_proj = self.proj_out(residual_out)
             outs += [last_proj]
             logits = self.stop_prob(last_proj)
 
@@ -187,23 +197,25 @@ class Decoder(torch.nn.Module):
 
         device = enc_z.device
 
-        last_proj = torch.zeros(batch_size, 1, 80).to(device)
+        output = torch.zeros(batch_size, 1, 512).to(device)
+        context = torch.zeros(batch_size, 1, 256).to(device)
+        state = torch.zeros(1,batch_size, 512).to(device)
 
         while True:
 
-            attn_proj = self.proj_in(last_proj)
-            attn_probs, attn_state, weights = self.attn(
-             attn_proj, device=enc_z.device, enc_seq_len=enc_z.size()[1], reset=i == 0)
+            input = torch.cat([output, context], 2)
+            
+            output, state = self.attention_rnn(input, state)
 
-            weighted_enc = attn_probs * enc_z
+            context, _, _ = self.attn(state, enc_z, device=enc_z.device)
 
-            context = torch.unsqueeze(torch.sum(weighted_enc, dim=1), 0)
+            residual_input = torch.cat([context, state.transpose(0,1)], 2)
 
-            input = torch.cat([last_proj, context], dim=2)
+            residual_out, (self.residual_c, self.residual_s) = self.residual_decoders(
+                residual_input, (self.residual_c, self.residual_s) if i > 0 else None)
 
-            last, (c, s) = self.rnns(input, (c, s) if i > 0 else None)
 
-            last_proj = self.proj_out(last)
+            last_proj = self.proj_out(residual_out)
             outs += [last_proj]
 
             # get logits for probability of stop token

@@ -17,7 +17,7 @@ class MOLAttn(torch.nn.Module):
     """
 
     def __init__(
-        self, input_dim, output_dim, att_dim, num_dists=5, frames_per_step=5
+        self, input_dim, output_dim, att_dim, num_dists=1, frames_per_step=5
     ):
         super(MOLAttn, self).__init__()
         
@@ -27,45 +27,30 @@ class MOLAttn(torch.nn.Module):
         self.frames_per_step = frames_per_step
         self.num_dists = num_dists
 
-        self.rnn = torch.nn.GRU(256,256)
+
 
         self.proj = torch.nn.Sequential(
-            torch.nn.Linear(256, 256),
+            torch.nn.Linear(input_dim, input_dim),
             torch.nn.ReLU(),
-            torch.nn.Linear(256, 256),
         )
         
         # fully-connected layer for predicting logistic distribution parameters
         # mean/scale/mixture weight
         # accepts hidden state of B x S x HS
         # outputs B x S x 
-        self.mean_net = torch.nn.Sequential(
-                torch.nn.Linear(256, 256), 
+        self.param_net = torch.nn.Sequential(
+                torch.nn.Linear(512, 256), 
                 torch.nn.Tanh(),
-                torch.nn.Linear(256, self.num_dists)
-            ) 
-
-        self.scale_net = torch.nn.Sequential(
-                torch.nn.Linear(256, 256), 
-                torch.nn.Tanh(),
-                torch.nn.Linear(256, self.num_dists)
-            ) 
-
-        self.weight_net = torch.nn.Sequential(
-                torch.nn.Linear(256, 256), 
-                torch.nn.Tanh(),
-                torch.nn.Linear(256, self.num_dists)
+                torch.nn.Linear(256, self.num_dists  * 3)
             ) 
    
     def _logistic(self, x, mean, scale):
       return torch.nn.functional.sigmoid((x - mean) / scale)
-      #denom =  1 + torch.exp(-(torch.div((x - mean), scale, rounding_mode="trunc" )))
-      #return 1 / denom
 
     def forward(
         self,
-        input,
-        enc_seq_len=None,
+        state,
+        enc_z,
         device=None,
         reset=False
     ):
@@ -76,42 +61,40 @@ class MOLAttn(torch.nn.Module):
         :rtype: torch.Tensor
         """
         torch.autograd.set_detect_anomaly(True)
-        
-        out, self.state  = self.rnn(input, self.state if reset == False else None)
-
-        #param_in = torch.cat([out, self.state], dim=2)
-        param_in = self.proj(out)
 
         # applies FFN to get MoL params
         # returned tensor will be B x (num_dist * 3), so we reshape to B x num_dist x 3
         # 0 is mean, 1 is scale, 2 is weight
-        
-        if reset == True:
-          means = torch.exp(self.mean_net(param_in)) 
-        else:
-          means = torch.exp(self.mean_net(param_in)) + self.means 
-        
-        self.means = means
+        params = torch.exp(self.param_net(state)) 
 
-        scales = torch.exp(self.scale_net(param_in)) 
-        weights = torch.exp(self.weight_net(param_in)) 
+        mean_indices = torch.LongTensor([(i*3) for i in range(self.num_dists)]).to(device)
+        mean_indices = torch.tile(mean_indices, [params.size()[0], 1, 1])
+        means = torch.gather(params, 2, mean_indices)
+        
+        scale_indices = torch.LongTensor([1+(i*3) for i in range(self.num_dists)]).to(device)
+        scale_indices = torch.tile(scale_indices, [params.size()[0], 1, 1])
+        scales = torch.gather(params, 2, scale_indices)
+
+        weights_indices = torch.LongTensor([2+(i*3) for i in range(self.num_dists)]).to(device)
+        weights_indices = torch.tile(weights_indices, [params.size()[0], 1, 1])
+        weights = torch.gather(params, 2, weights_indices)
 
         weights = torch.nn.functional.softmax(weights, dim=1)
 
         alignment_probs = []
-        for j in range(enc_seq_len):
+        for j in range(enc_z.size()[1]):
             f1 = self._logistic(j + 0.5, means, scales)
             f2 = self._logistic(j - 0.5, means, scales)
             alignment_probs += [ weights * (f1 - f2) ]
         
         alignment_probs = torch.cat(alignment_probs,dim=1)
         alignment_probs = torch.sum(alignment_probs, 2)
-        
-        #alignment_probs = torch.nn.functional.softmax(alignment_probs,dim=1)
-        
-        alignment_probs = torch.unsqueeze(alignment_probs,2)
 
-        return alignment_probs, None,None
+        weighted_enc_z = torch.unsqueeze(alignment_probs,2) * enc_z
+
+        context = torch.unsqueeze(torch.sum(weighted_enc_z, dim=1), 1).to(device)
+
+        return context, None, None
         
         weights = []
         scales = []
