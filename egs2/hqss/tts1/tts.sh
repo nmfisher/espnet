@@ -582,6 +582,16 @@ if ! "${skip_train}"; then
               ${_teacher_valid_dir}/durations \
                ${data_feats}/${valid_set}/text \
               ${data_feats}/${valid_set}/clusters_d
+
+            ./scripts/feats/cluster_f0.sh \
+              ${data_feats}/${train_set}/wav.scp \
+              ${_teacher_train_dir}/durations \
+              ${data_feats}/${train_set}/text \
+              ${data_feats}/${train_set}/clusters_d \
+              ${data_feats}/${valid_set}/wav.scp \
+              ${_teacher_valid_dir}/durations \
+               ${data_feats}/${valid_set}/text \
+              ${data_feats}/${valid_set}/clusters_d
         fi
 
         if "${use_xvector}"; then
