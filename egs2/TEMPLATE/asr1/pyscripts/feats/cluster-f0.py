@@ -71,13 +71,6 @@ def get_parser():
         default=8000,
         help="Max frequency",
     )
-    parser.add_argument(
-        "out",
-        nargs="?",
-        type=argparse.FileType("w"),
-        default=sys.stdout,
-        help="The output filename. " "If omitted, then output to sys.stdout",
-    )
     return parser
 
 
@@ -179,8 +172,6 @@ def main():
                 cluster_ids=k.predict(np.array(f0).reshape(len(f0), 1)).tolist()
                 cluster_ids=[str(x) for x in cluster_ids]
                 outfile.write("{} {}\n".format(utt_id, " ".join(cluster_ids)))
-    print("Done!")
-
 
 if __name__ == "__main__":
     main()
