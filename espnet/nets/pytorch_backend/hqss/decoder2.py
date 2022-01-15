@@ -72,10 +72,13 @@ class Decoder(torch.nn.Module):
             torch.nn.ReLU(),
             torch.nn.Linear(512, 512),
         )
-        self.attention_rnn = torch.nn.GRU(768, 512, batch_first=True)
-        self.attn = MOLAttn(512, 512, self.adim)
+        self.acoustic_attention_rnn = torch.nn.GRU(768, 512, batch_first=True)
+        self.acoustic_attn = MOLAttn(512, 512, self.adim)
 
-        self.residual_decoders = torch.nn.LSTM(768, 512, num_layers=1, batch_first=True)
+        self.prosody_attention_rnn = torch.nn.GRU(768, 512, batch_first=True)
+        self.prosody_attn = MOLAttn(512, 512, self.adim)
+
+        self.residual_decoders = torch.nn.LSTM(1536, 512, num_layers=1, batch_first=True)
 
         #self.zoneout = ZoneOutCell(self.residual_decoders, zoneout_rate)
 
@@ -83,11 +86,7 @@ class Decoder(torch.nn.Module):
             torch.nn.Linear(512, self.dec_odim),
             torch.nn.ReLU(),
             torch.nn.Linear(self.dec_odim, self.dec_odim),
-            #torch.nn.Linear(256, 512),
-            #  torch.nn.ReLU(),
-            #torch.nn.Linear(512, self.dec_odim),
         )
-        #self.proj_out = torch.nn.Linear(256, self.dec_odim)
 
         # FC for stop-token logits
         self.stop_prob = torch.nn.Sequential(torch.nn.Linear(self.dec_odim, 1))
@@ -95,11 +94,12 @@ class Decoder(torch.nn.Module):
         # initialize
         self.apply(decoder_init)
 
-    def forward(self, enc_z, ys):
+    def forward(self, enc_z, enc_p, ys):
         """Calculate forward propagation.
 
         Args:
-            enc_z (Tensor): Batch of the sequences of encoder output (B, Tmax, enc_odim).
+            enc_z (Tensor): Batch of the sequences of acoustic feature encoder output (B, Tmax, enc_odim).
+            enc_p (Tensor): Batch of the sequences of prosody feature encoder output (B, Tmax, enc_odim).
             ys (Tensor):
                 Batch of the sequences of padded target features (B, Lmax, odim).
 
@@ -116,26 +116,33 @@ class Decoder(torch.nn.Module):
         device = enc_z.device
         batch_size = int(ys.size()[0])
         decoder_steps = int(ys.size()[1])
-        encoder_steps = int(enc_z.size()[1])
 
         outs = []
 
         logits_all = []
 
         output = torch.zeros(batch_size, 1, 512).to(device)
-        context = torch.zeros(batch_size, 1, 256).to(device)
-        state = torch.zeros(1,batch_size, 512).to(device)
+        acoustic_context = torch.zeros(batch_size, 1, 256).to(device)
+        prosody_context = torch.zeros(batch_size, 1, 256).to(device)
+        prosody_state = torch.zeros(1,batch_size, 512).to(device)
+        acoustic_state = torch.zeros(1,batch_size, 512).to(device)
 
         # for every decoder step
         weights = []
         for i in range(decoder_steps):
-            input = torch.cat([output, context], 2)
+            # first, decode acoustic features
+            acoustic_input = torch.cat([output, acoustic_context], 2)
+            acoustic_output, acoustic_state = self.acoustic_attention_rnn(acoustic_input, acoustic_state)
+            acoustic_context, _, _ = self.acoustic_attn(acoustic_state, enc_z, device=enc_z.device)
+            residual_acoustic_input = torch.cat([acoustic_context, acoustic_state.transpose(0,1)], 2)
             
-            output, state = self.attention_rnn(input, state)
+            # next, decode prosody features
+            prosody_input = torch.cat([output, prosody_context], 2)
+            prosody_output, prosody_state = self.prosody_attention_rnn(prosody_input, prosody_state)
+            prosody_context, _, _ = self.prosody_attn(prosody_state, enc_z, device=enc_z.device)
+            residual_prosody_input = torch.cat([prosody_context, prosody_state.transpose(0,1)],2)
 
-            context, _, _ = self.attn(state, enc_z, device=enc_z.device)
-
-            residual_input = torch.cat([context, state.transpose(0,1)], 2)
+            residual_input = torch.cat([residual_acoustic_input, residual_prosody_input],dim=2)
 
             residual_out, (self.residual_c, self.residual_s) = self.residual_decoders(
                 residual_input, (self.residual_c, self.residual_s) if i > 0 else None)
