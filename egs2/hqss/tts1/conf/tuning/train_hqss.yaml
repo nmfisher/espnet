@@ -42,7 +42,7 @@ batch_type: unsorted
 allow_variable_data_keys: true
 sort_in_batch: descending   # how to sort data in making batch
 sort_batch: descending      # how to sort created batches
-num_workers: 4              # number of workers of data loader
+num_workers: 1              # number of workers of data loader
 train_dtype: float32        # dtype in training
 log_interval: null          # log interval in iterations
 keep_nbest_models: 5        # number of models to keep
