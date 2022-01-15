@@ -308,57 +308,58 @@ class TTSTask(AbsTask):
 
         # 3. TTS
         tts_class = tts_choices.get_class(args.tts)
-        print(args.tts_conf)
+        
         tts = tts_class(idim=vocab_size, odim=odim, **args.tts_conf)
 
         # 4. Extra components
-        pitch_extract = None
-        energy_extract = None
-        pitch_normalize = None
-        energy_normalize = None
-        if getattr(args, "pitch_extract", None) is not None:
-            pitch_extract_class = pitch_extractor_choices.get_class(args.pitch_extract)
-            if args.pitch_extract_conf.get("reduction_factor", None) is not None:
-                assert args.pitch_extract_conf.get(
-                    "reduction_factor", None
-                ) == args.tts_conf.get("reduction_factor", 1)
-            else:
-                args.pitch_extract_conf["reduction_factor"] = args.tts_conf.get(
-                    "reduction_factor", 1
-                )
-            pitch_extract = pitch_extract_class(**args.pitch_extract_conf)
-        if getattr(args, "energy_extract", None) is not None:
-            if args.energy_extract_conf.get("reduction_factor", None) is not None:
-                assert args.energy_extract_conf.get(
-                    "reduction_factor", None
-                ) == args.tts_conf.get("reduction_factor", 1)
-            else:
-                args.energy_extract_conf["reduction_factor"] = args.tts_conf.get(
-                    "reduction_factor", 1
-                )
-            energy_extract_class = energy_extractor_choices.get_class(
-                args.energy_extract
-            )
-            energy_extract = energy_extract_class(**args.energy_extract_conf)
-        if getattr(args, "pitch_normalize", None) is not None:
-            pitch_normalize_class = pitch_normalize_choices.get_class(
-                args.pitch_normalize
-            )
-            pitch_normalize = pitch_normalize_class(**args.pitch_normalize_conf)
-        if getattr(args, "energy_normalize", None) is not None:
-            energy_normalize_class = energy_normalize_choices.get_class(
-                args.energy_normalize
-            )
-            energy_normalize = energy_normalize_class(**args.energy_normalize_conf)
+        # pitch_extract = None
+        # energy_extract = None
+        # pitch_normalize = None
+        # energy_normalize = None
+        
+        # if getattr(args, "pitch_extract", None) is not None:
+        #     pitch_extract_class = pitch_extractor_choices.get_class(args.pitch_extract)
+        #     if args.pitch_extract_conf.get("reduction_factor", None) is not None:
+        #         assert args.pitch_extract_conf.get(
+        #             "reduction_factor", None
+        #         ) == args.tts_conf.get("reduction_factor", 1)
+        #     else:
+        #         args.pitch_extract_conf["reduction_factor"] = args.tts_conf.get(
+        #             "reduction_factor", 1
+        #         )
+        #     pitch_extract = pitch_extract_class(**args.pitch_extract_conf)
+        # if getattr(args, "energy_extract", None) is not None:
+        #     if args.energy_extract_conf.get("reduction_factor", None) is not None:
+        #         assert args.energy_extract_conf.get(
+        #             "reduction_factor", None
+        #         ) == args.tts_conf.get("reduction_factor", 1)
+        #     else:
+        #         args.energy_extract_conf["reduction_factor"] = args.tts_conf.get(
+        #             "reduction_factor", 1
+        #         )
+        #     energy_extract_class = energy_extractor_choices.get_class(
+        #         args.energy_extract
+        #     )
+        #     energy_extract = energy_extract_class(**args.energy_extract_conf)
+        # if getattr(args, "pitch_normalize", None) is not None:
+        #     pitch_normalize_class = pitch_normalize_choices.get_class(
+        #         args.pitch_normalize
+        #     )
+        #     pitch_normalize = pitch_normalize_class(**args.pitch_normalize_conf)
+        # if getattr(args, "energy_normalize", None) is not None:
+        #     energy_normalize_class = energy_normalize_choices.get_class(
+        #         args.energy_normalize
+        #     )
+        #     energy_normalize = energy_normalize_class(**args.energy_normalize_conf)
 
         # 5. Build model
         model = ESPnetTTSModel(
             feats_extract=feats_extract,
-            pitch_extract=pitch_extract,
-            energy_extract=energy_extract,
+            pitch_extract=None,
+            energy_extract=None,
             normalize=normalize,
-            pitch_normalize=pitch_normalize,
-            energy_normalize=energy_normalize,
+            pitch_normalize=None,
+            energy_normalize=None,
             tts=tts,
             **args.model_conf,
         )
