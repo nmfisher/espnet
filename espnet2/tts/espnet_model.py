@@ -91,6 +91,7 @@ class ESPnetTTSModel(AbsESPnetModel):
             Tensor: Weight tensor to summarize losses.
 
         """
+        
         with autocast(False):
             # Extract features
             if self.feats_extract is not None:
@@ -100,22 +101,22 @@ class ESPnetTTSModel(AbsESPnetModel):
                 feats, feats_lengths = speech, speech_lengths
 
             # Extract auxiliary features
-            if self.pitch_extract is not None and pitch is None:
-                pitch, pitch_lengths = self.pitch_extract(
-                    speech,
-                    speech_lengths,
-                    feats_lengths=feats_lengths,
-                    durations=durations,
-                    durations_lengths=durations_lengths,
-                )
-            if self.energy_extract is not None and energy is None:
-                energy, energy_lengths = self.energy_extract(
-                    speech,
-                    speech_lengths,
-                    feats_lengths=feats_lengths,
-                    durations=durations,
-                    durations_lengths=durations_lengths,
-                )
+            # if self.pitch_extract is not None and pitch is None:
+            #     pitch, pitch_lengths = self.pitch_extract(
+            #         speech,
+            #         speech_lengths,
+            #         feats_lengths=feats_lengths,
+            #         durations=durations,
+            #         durations_lengths=durations_lengths,
+            #     )
+            # if self.energy_extract is not None and energy is None:
+            #     energy, energy_lengths = self.energy_extract(
+            #         speech,
+            #         speech_lengths,
+            #         feats_lengths=feats_lengths,
+            #         durations=durations,
+            #         durations_lengths=durations_lengths,
+            #     )
 
             # Normalize
             if self.normalize is not None:
@@ -142,10 +143,11 @@ class ESPnetTTSModel(AbsESPnetModel):
             batch.update(lids=lids)
         if durations is not None:
             batch.update(durations=durations, durations_lengths=durations_lengths)
-        if self.pitch_extract is not None and pitch is not None:
-            batch.update(pitch=pitch, pitch_lengths=pitch_lengths)
-        if self.energy_extract is not None and energy is not None:
-            batch.update(energy=energy, energy_lengths=energy_lengths)
+        #if self.pitch_extract is not None and pitch is not None:
+        if pitch is not None:
+            batch.update(pitch=pitch)
+        #if self.energy_extract is not None and energy is not None:
+        #    batch.update(energy=energy, energy_lengths=energy_lengths)
         if self.tts.require_raw_speech:
             batch.update(speech=speech, speech_lengths=speech_lengths)
 
