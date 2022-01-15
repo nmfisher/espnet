@@ -96,45 +96,4 @@ class MOLAttn(torch.nn.Module):
 
         return context, None, None
         
-        weights = []
-        scales = []
-
-        means = []
-        # apply FC nets to get params for each mixture            
-        for k in range(self.num_dists):
-            param_net = self.param_nets[k].to(device)
-            params = param_net(torch.squeeze(self.state, 0))
-            
-            if reset:
-              means += [ torch.exp(params[:,0]) ]
-            else:              
-              means += [ torch.exp(params[:,0]) + self.means[-1][k]  ]
-            
-            scales += [ torch.exp(params[:,1]) ]
-            
-            weights += params[:, 2]
-        self.means += [ means ]
-        weights = torch.nn.functional.softmax(torch.Tensor(weights), dim=0)
         
-        # container for encoder alignment probabilities
-        a = []
-        
-        # calculate alignment probabilities for each encoder timestep
-        for j in range(enc_seq_len):
-          a += [ 0 ]
-          for k in range(self.num_dists):
-            mean = means[k]
-            scale = scales[k]
-
-            f1 = self._logistic(j + 0.5,  mean, scale)
-            f2 = self._logistic(j - 0.5, mean, scale)
-
-            step_prob = weights[k] * (f1 - f2)
-            
-            a[-1] += step_prob
-        probs = torch.cat(a,dim=-1)
-        
-        probs = probs.reshape(input.size()[0], enc_seq_len, 1).to(device)
-        return probs, self.state, weights
-
-

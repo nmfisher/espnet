@@ -2,9 +2,9 @@
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 
 """Tacotron 2 related modules for ESPnet2."""
-
+import os
 import logging
-
+import numpy as np
 from typing import Dict
 from typing import Optional
 from typing import Sequence
@@ -17,13 +17,12 @@ from typeguard import check_argument_types
 
 from espnet.nets.pytorch_backend.hqss.loss import HQSSLoss
 from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
-from espnet.nets.pytorch_backend.hqss.decoder import Decoder
+from espnet.nets.pytorch_backend.hqss.decoder2 import Decoder
 from espnet.nets.pytorch_backend.hqss.encoder import Encoder
 
 from espnet2.torch_utils.device_funcs import force_gatherable
 
 from espnet2.tts.abs_tts import AbsTTS
-
 
 class HQSS(AbsTTS):
     """HQSS  module for end-to-end text-to-speech."""
@@ -32,8 +31,6 @@ class HQSS(AbsTTS):
         # network structure related
         idim: int,
         odim: int,
-        max_oseq_len: int,
-        batch_size: int,
         embed_dim: int = 512,
         econv_layers: int = 3,
         econv_chans: int = 512,
@@ -57,6 +54,7 @@ class HQSS(AbsTTS):
         use_weighted_masking: bool = False,
         bce_pos_weight: float = 5.0,
         loss_type: str = "L1+L2",
+        reduction_factor: int = 1,
     ):
         """Initialize HQSS module.
 
@@ -98,23 +96,17 @@ class HQSS(AbsTTS):
         assert check_argument_types()
         super().__init__()
 
+        self.spks = None
+        self.langs = None
+        self.spk_embed_dim = None
+
         # store hyperparameters
         self.idim = idim
         self.odim = odim
         self.eos = idim - 1
         
         self.loss_type = loss_type
-
-        # define activation function for the final output
-        if output_activation is None:
-            self.output_activation_fn = None
-        elif hasattr(F, output_activation):
-            self.output_activation_fn = getattr(F, output_activation)
-        else:
-            raise ValueError(
-                f"there is no such an activation function. " f"({output_activation})"
-            )
-
+        
         # set padding idx
         padding_idx = 0
         self.padding_idx = padding_idx
@@ -128,15 +120,10 @@ class HQSS(AbsTTS):
             dropout_rate=dropout_rate,
             padding_idx=padding_idx,
         )
-
-        print(f"econv {econv_chans} odom {odim}")
-
         self.dec = Decoder(
             econv_chans,
             odim,
             adim,
-            max_oseq_len=max_oseq_len,
-            batch_size=batch_size,
             prenet_layers=prenet_layers,
             prenet_units=prenet_units,
             postnet_layers=postnet_layers,
@@ -144,10 +131,11 @@ class HQSS(AbsTTS):
             postnet_filts=postnet_filts,
             use_batch_norm=use_batch_norm,
             dropout_rate=dropout_rate,
+
         )
         self.hqss_loss = HQSSLoss(
-            use_masking=use_masking,
-            use_weighted_masking=use_weighted_masking,
+            use_masking=True,
+            use_weighted_masking=False,
             bce_pos_weight=bce_pos_weight,
         )
 
@@ -157,6 +145,10 @@ class HQSS(AbsTTS):
         text_lengths: torch.Tensor,
         feats: torch.Tensor,
         feats_lengths: torch.Tensor,
+        durations:torch.Tensor,
+        durations_lengths:torch.Tensor,
+        pitch:torch.Tensor,
+        
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor]:
         """Calculate forward propagation.
 
@@ -171,6 +163,7 @@ class HQSS(AbsTTS):
             Tensor: Weight value if not joint training else model outputs.
 
         """
+        
         text = text[:, : text_lengths.max()]  # for data-parallel
         feats = feats[:, : feats_lengths.max()]  # for data-parallel
 
@@ -181,23 +174,29 @@ class HQSS(AbsTTS):
         for i, l in enumerate(text_lengths):
             xs[i, l] = self.eos
         ilens = text_lengths + 1
-
+        
         ys = feats
         olens = feats_lengths
 
         # make labels for stop prediction
         labels = make_pad_mask(olens - 1).to(ys.device, ys.dtype)
-        labels = F.pad(labels, [0, 1], "constant", 1.0)
 
-        # forward pass
+        labels = F.pad(labels, [0, 1], "constant", 1.0)
         
+        # forward pass
         hs, hlens = self.enc(xs, ilens)
-        #print(f"xs {xs.size()} ilens {ilens.size()} hs {hs.size()}")
-        after_outs, before_outs, logits = self.dec(hs, ys)
-        #print(f"after_outs {after_outs.size()} before_outs {before_outs.size()} logits {logits.size()} ys {ys.size()} labels {labels.size()}")
+
+        prosody_enc = self.prosody_enc(durations, pitch)
+
+        
+
+        after_outs, before_outs, logits, weights = self.dec(hs, ys)
+
+#        self._plot_and_save_attention([w[0,:,:] for w in weights], "/tmp/attn.png", xtokens=list(range(len(weights))))
+
         # calculate loss (for HQSS we have copied all potential loss functions but we only use L1)
         l1_loss, mse_loss, bce_loss = self.hqss_loss(
-            after_outs, before_outs, logits, ys, labels, olens
+            after_outs, before_outs, ys, logits, labels
         )
         if self.loss_type == "L1+L2":
             loss = l1_loss + mse_loss + bce_loss
@@ -214,8 +213,6 @@ class HQSS(AbsTTS):
             bce_loss=bce_loss.item(),
         )
 
-
-        
         stats.update(loss=loss.item())
         loss, stats, weight = force_gatherable(
             (loss, stats, batch_size), loss.device
@@ -226,9 +223,6 @@ class HQSS(AbsTTS):
         self,
         text: torch.Tensor,
         feats: Optional[torch.Tensor] = None,
-        spembs: Optional[torch.Tensor] = None,
-        sids: Optional[torch.Tensor] = None,
-        lids: Optional[torch.Tensor] = None,
         threshold: float = 0.5,
         minlenratio: float = 0.0,
         maxlenratio: float = 10.0,
@@ -242,9 +236,6 @@ class HQSS(AbsTTS):
         Args:
             text (LongTensor): Input sequence of characters (T_text,).
             feats (Optional[Tensor]): Feature sequence to extract style (N, idim).
-            spembs (Optional[Tensor]): Speaker embedding (spk_embed_dim,).
-            sids (Optional[Tensor]): Speaker ID (1,).
-            lids (Optional[Tensor]): Language ID (1,).
             threshold (float): Threshold in inference.
             minlenratio (float): Minimum length ratio in inference.
             maxlenratio (float): Maximum length ratio in inference.
@@ -260,79 +251,56 @@ class HQSS(AbsTTS):
                 * att_w (Tensor): Attention weights (T_feats, T).
 
         """
-        x = text
-        y = feats
-        spemb = spembs
+        x = text     
 
         # add eos at the last of sequence
         x = F.pad(x, [0, 1], "constant", self.eos)
 
-        # inference with teacher forcing
-        if use_teacher_forcing:
-            assert feats is not None, "feats must be provided with teacher forcing."
-
-            xs, ys = x.unsqueeze(0), y.unsqueeze(0)
-            spembs = None if spemb is None else spemb.unsqueeze(0)
-            ilens = x.new_tensor([xs.size(1)]).long()
-            olens = y.new_tensor([ys.size(1)]).long()
-            outs, _, _, att_ws = self._forward(
-                xs=xs,
-                ilens=ilens,
-                ys=ys,
-                olens=olens,
-                spembs=spembs,
-                sids=sids,
-                lids=lids,
-            )
-
-            return dict(feat_gen=outs[0], att_w=att_ws[0])
-
         # inference
         h = self.enc.inference(x)
-        if self.spks is not None:
-            sid_emb = self.sid_emb(sids.view(-1))
-            h = h + sid_emb
-        if self.langs is not None:
-            lid_emb = self.lid_emb(lids.view(-1))
-            h = h + lid_emb
-        if self.spk_embed_dim is not None:
-            hs, spembs = h.unsqueeze(0), spemb.unsqueeze(0)
-            h = self._integrate_with_spk_embed(hs, spembs)[0]
-        out, prob, att_w = self.dec.inference(
+    
+        out, attn_w = self.dec.inference(
             h,
             threshold=threshold,
             minlenratio=minlenratio,
             maxlenratio=maxlenratio,
-            use_att_constraint=use_att_constraint,
-            backward_window=backward_window,
-            forward_window=forward_window,
         )
 
-        return dict(feat_gen=out, prob=prob, att_w=att_w)
+        return dict(feat_gen=out, prob=None, att_w=None)
 
-    def _integrate_with_spk_embed(
-        self, hs: torch.Tensor, spembs: torch.Tensor
-    ) -> torch.Tensor:
-        """Integrate speaker embedding with hidden states.
+    def _plot_and_save_attention(self, att_w, filename, xtokens=None, ytokens=None):
+        import matplotlib
 
-        Args:
-            hs (Tensor): Batch of hidden state sequences (B, Tmax, eunits).
-            spembs (Tensor): Batch of speaker embeddings (B, spk_embed_dim).
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.ticker import MaxNLocator
 
-        Returns:
-            Tensor: Batch of integrated hidden state sequences (B, Tmax, eunits) if
-                integration_type is "add" else (B, Tmax, eunits + spk_embed_dim).
-
-        """
-        if self.spk_embed_integration_type == "add":
-            # apply projection and then add to hidden states
-            spembs = self.projection(F.normalize(spembs))
-            hs = hs + spembs.unsqueeze(1)
-        elif self.spk_embed_integration_type == "concat":
-            # concat hidden states with spk embeds
-            spembs = F.normalize(spembs).unsqueeze(1).expand(-1, hs.size(1), -1)
-            hs = torch.cat([hs, spembs], dim=-1)
-        else:
-            raise NotImplementedError("support only add or concat.")
-
-        return hs
+        d = os.path.dirname(filename)
+        if not os.path.exists(d):
+            os.makedirs(d)
+        w, h = plt.figaspect(1.0 / len(att_w))
+        fig = plt.Figure(figsize=(w * 2, h * 2))
+        axes = fig.subplots(1, len(att_w))
+        if len(att_w) == 1:
+            axes = [axes]
+        for ax, aw in zip(axes, att_w):
+            # plt.subplot(1, len(att_w), h)
+            
+            ax.imshow(aw.cpu().detach().numpy().astype(np.float32), aspect="auto")
+            ax.set_xlabel("Input")
+            ax.set_ylabel("Output")
+            ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+            ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+            # Labels for major ticks
+            if xtokens is not None:
+                ax.set_xticks(np.linspace(0, len(xtokens) - 1, len(xtokens)))
+                ax.set_xticks(np.linspace(0, len(xtokens) - 1, 1), minor=True)
+                ax.set_xticklabels(xtokens + [""], rotation=40)
+            if ytokens is not None:
+                ax.set_yticks(np.linspace(0, len(ytokens) - 1, len(ytokens)))
+                ax.set_yticks(np.linspace(0, len(ytokens) - 1, 1), minor=True)
+                ax.set_yticklabels(ytokens + [""])
+        fig.tight_layout()
+        fig.savefig(filename)
+        plt.clf()
+        return fig
