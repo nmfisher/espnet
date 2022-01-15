@@ -23,7 +23,7 @@ def encoder_init(m):
         torch.nn.init.xavier_uniform_(m.weight, torch.nn.init.calculate_gain("relu"))
 
 
-class Encoder(torch.nn.Module):
+class ProsodyEncoder(torch.nn.Module):
     """Encoder module of Spectrogram prediction network.
 
     This is a module of encoder of Spectrogram prediction network in HQSS,
@@ -37,8 +37,6 @@ class Encoder(torch.nn.Module):
 
     def __init__(
         self,
-        idim,
-        input_layer="embed",
         embed_dim=128,
         cbhg_layers=1,
         prenet_layers=2,
@@ -60,14 +58,13 @@ class Encoder(torch.nn.Module):
             use_batch_norm (bool, optional) Whether to use batch normalization.
             dropout_rate (float, optional) Dropout rate.
         """
-        super(Encoder, self).__init__()
+        super(ProsodyEncoder, self).__init__()
 
         # define network layer modules
         self.pitch_embed = torch.nn.Embedding(num_clusters, embed_dim, padding_idx=padding_idx)
         self.duration_embed = torch.nn.Embedding(num_clusters, embed_dim,  padding_idx=padding_idx)
 
-        prenet_units = 512
-        self.prenet = Prenet(embed_dim, n_layers=prenet_layers, n_units=prenet_units)
+        self.prenet = Prenet(embed_dim*2, n_layers=prenet_layers, n_units=prenet_units)
 
         self.convs = torch.nn.ModuleList()
         for layer in six.moves.range(cbhg_layers):
@@ -93,8 +90,8 @@ class Encoder(torch.nn.Module):
             LongTensor: Batch of lengths of each sequence (B,)
 
         """
-        durations_emb = self.embed(durations)
-        pitch_emb = self.embed(pitch)
+        durations_emb = self.duration_embed(durations)
+        pitch_emb = self.pitch_embed(pitch)
 
         xs_emb = torch.cat([durations_emb, pitch_emb],2)
 

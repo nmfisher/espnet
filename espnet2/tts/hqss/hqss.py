@@ -19,6 +19,7 @@ from espnet.nets.pytorch_backend.hqss.loss import HQSSLoss
 from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 from espnet.nets.pytorch_backend.hqss.decoder2 import Decoder
 from espnet.nets.pytorch_backend.hqss.encoder import Encoder
+from espnet.nets.pytorch_backend.hqss.prosody_encoder import ProsodyEncoder
 
 from espnet2.torch_utils.device_funcs import force_gatherable
 
@@ -120,6 +121,13 @@ class HQSS(AbsTTS):
             dropout_rate=dropout_rate,
             padding_idx=padding_idx,
         )
+
+        self.prosody_enc = ProsodyEncoder(
+            econv_chans=econv_chans,
+            use_batch_norm=use_batch_norm,
+            dropout_rate=dropout_rate,
+            padding_idx=padding_idx,
+        )
         self.dec = Decoder(
             econv_chans,
             odim,
@@ -186,11 +194,9 @@ class HQSS(AbsTTS):
         # forward pass
         hs, hlens = self.enc(xs, ilens)
 
-        prosody_enc = self.prosody_enc(durations, pitch)
+        prosody_enc = self.prosody_enc(durations, pitch, ilens)
 
-        
-
-        after_outs, before_outs, logits, weights = self.dec(hs, ys)
+        after_outs, before_outs, logits, weights = self.dec(hs, prosody_enc, ys)
 
 #        self._plot_and_save_attention([w[0,:,:] for w in weights], "/tmp/attn.png", xtokens=list(range(len(weights))))
 
