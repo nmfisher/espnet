@@ -1,0 +1,57 @@
+# This configuration is for ESPnet2 to train HQSS
+
+##########################################################
+#                  TTS MODEL SETTING                     #
+##########################################################
+tts: hqss                   # model architecture
+tts_conf:                        # keyword arguments for the selected model
+    embed_dim: 256               # char or phn embedding dimension
+    econv_layers: 3              # number of convolutional layers in encoder
+    econv_chans: 256             # number of channels in convolutional layer
+    econv_filts: 5               # filter size of convolutional layer
+    adim: 256                    # attention dimension
+    reduction_factor: 1
+#pitch_extract: dio           # pitch extractor type
+#pitch_normalize: global_mvn  # normalizer for the pitch feature
+
+#energy_extract: energy       # energy extractor type
+#energy_normalize: global_mvn # normalizer for the energy feature
+
+##########################################################
+#                  OPTIMIZER SETTING                     #
+##########################################################
+optim: adam           # optimizer type
+optim_conf:           # keyword arguments for selected optimizer
+    lr: 1.0e-03       # learning rate
+    eps: 1.0e-05      # epsilon
+    weight_decay: 0 # weight decay coefficient
+
+##########################################################
+#                OTHER TRAINING SETTING                  #
+##########################################################
+num_iters_per_epoch: 10    # number of iterations per epoch
+max_epoch: 400              # number of epochs
+grad_clip: 1.0              # gradient clipping norm
+grad_noise: false           # whether to use gradient noise injection
+accum_grad: 1               # gradient accumulation
+# batch_bins: 1600000       # batch bins (for feats_type=fbank)
+#batch_bins: 1280000         # batch bins (for feats_type=raw, *= n_shift / n_mels)
+batch_size: 12
+batch_type: unsorted
+#batch_type: numel           # how to make batch
+allow_variable_data_keys: true
+sort_in_batch: descending   # how to sort data in making batch
+sort_batch: descending      # how to sort created batches
+num_workers: 4              # number of workers of data loader
+train_dtype: float32        # dtype in training
+log_interval: null          # log interval in iterations
+keep_nbest_models: 5        # number of models to keep
+num_att_plot: 3             # number of attention figures to be saved in every check
+seed: 0                     # random seed number
+best_model_criterion:
+-   - valid
+    - loss
+    - min
+-   - train
+    - loss
+    - min
