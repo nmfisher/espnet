@@ -174,7 +174,8 @@ class HQSS(AbsTTS):
         
         text = text[:, : text_lengths.max()]  # for data-parallel
         feats = feats[:, : feats_lengths.max()]  # for data-parallel
-
+        durations = durations[:, : durations_lengths.max() ]
+        
         batch_size = text.size(0)
 
         # Add eos at the last of sequence
@@ -194,7 +195,9 @@ class HQSS(AbsTTS):
         # forward pass
         hs, hlens = self.enc(xs, ilens)
 
-        prosody_enc = self.prosody_enc(durations, pitch, ilens)
+        #print(f"{ilens} {durations.size()} {pitch.size()} {durations_lengths}")
+
+        prosody_enc = self.prosody_enc(durations, pitch, durations_lengths)
 
         after_outs, before_outs, logits, weights = self.dec(hs, prosody_enc, ys)
 
