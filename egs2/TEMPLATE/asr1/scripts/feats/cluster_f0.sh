@@ -9,8 +9,8 @@ preprocess_conf=""
 # End configuration section.
 
 help_message=$(cat << EOF
-Usage: $0 [options] <train-durations> <train-transcript> <valid-durations> <valid-transcript>  [<log-dir>]
-e.g.: $0 teacher_train_dir/durations data/train/text teacher_valid_dir/durations data/valid/text data/train/log
+Usage: $0 [options] <train-wav> <train-durations> <train-transcript> <valid-wav> <valid-durations> <valid-transcript> <f0min> <f0max>  [<log-dir>]
+e.g.: $0 data/train/wav.scp teacher_train_dir/durations data/train/text data/test/wav.scp teacher_valid_dir/durations data/valid/text data/train/log
 assuming data/train/text contains the phonetic transcript like:
 SPKR1_UTT1 h eh l l o
 
@@ -25,7 +25,7 @@ echo "$0 $*" 1>&2 # Print the command line for logging
 
 . parse_options.sh || exit 1;
 
-if [ $# -lt 2 ] || [ $# -gt 6 ]; then
+if [ $# -lt 2 ] || [ $# -gt 10 ]; then
     echo "${help_message}" 1>&2
     exit 1;
 fi
@@ -40,6 +40,8 @@ valid_wav=$5
 valid_durations=$6
 valid_transcript=$7
 valid_clusters_out=$8
+f0min=$9
+f0max=${10}
 
 data=$(dirname ${train_durations})
 logdir=${data}/log
@@ -48,6 +50,8 @@ mkdir -p ${logdir}
 # TODO - put sample rate/hop_len/num clusters etc into config
 nj=1
 ${cmd} JOB=1:${nj} ${logdir}/cluster_durations.JOB.log \
-    pyscripts/feats/cluster-f0.py 16000 256 15 --verbose ${verbose}  \
-    ${train_wav} ${train_durations} ${train_transcript}  ${train_clusters_out} ${valid_wav} ${valid_durations} ${valid_transcript} ${valid_clusters_out}
+    pyscripts/feats/cluster-f0.py 16000 256 15  \
+    ${train_wav} ${train_durations} ${train_transcript}  ${train_clusters_out} \
+    ${valid_wav} ${valid_durations} ${valid_transcript} ${valid_clusters_out} \
+    ${f0min} ${f0max}
 

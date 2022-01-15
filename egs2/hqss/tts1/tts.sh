@@ -573,8 +573,9 @@ if ! "${skip_train}"; then
             _teacher_valid_dir="${teacher_dumpdir}/${valid_set}"
             _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/clusters_d,durations,text_int "
             _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/clusters_d,durations,text_int "
-            #_opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/clusters_d,clusters_d,text_int "
-            #_opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/clusters_d,clusters_d,text_int "
+            _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/pitch,pitch,text_int "
+            _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/pitch,pitch,text_int "
+            #_opts+="--allow_variable_data_keys true"
             ./scripts/feats/cluster_durations.sh \
               ${_teacher_train_dir}/durations \
               ${data_feats}/${train_set}/text \
@@ -587,11 +588,12 @@ if ! "${skip_train}"; then
               ${data_feats}/${train_set}/wav.scp \
               ${_teacher_train_dir}/durations \
               ${data_feats}/${train_set}/text \
-              ${data_feats}/${train_set}/clusters_d \
+              ${data_feats}/${train_set}/pitch \
               ${data_feats}/${valid_set}/wav.scp \
               ${_teacher_valid_dir}/durations \
                ${data_feats}/${valid_set}/text \
-              ${data_feats}/${valid_set}/clusters_d
+              ${data_feats}/${valid_set}/pitch \
+              ${f0min} ${f0max}
         fi
 
         if "${use_xvector}"; then
@@ -640,6 +642,7 @@ if ! "${skip_train}"; then
 
         # 3. Submit jobs
         log "TTS collect_stats started... log: '${_logdir}/stats.*.log'"
+
         # shellcheck disable=SC2086
         ${train_cmd} JOB=1:"${_nj}" "${_logdir}"/stats.JOB.log \
             ${python} -m "espnet2.bin.${tts_task}_train" \
@@ -680,7 +683,7 @@ if ! "${skip_train}"; then
             >"${tts_stats_dir}/valid/text_shape.${token_type}"
     fi
 
-
+    
     if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
         _train_dir="${data_feats}/${train_set}"
         _valid_dir="${data_feats}/${valid_set}"
@@ -705,6 +708,7 @@ if ! "${skip_train}"; then
             _opts+="--feats_extract_conf n_fft=${n_fft} "
             _opts+="--feats_extract_conf hop_length=${n_shift} "
             _opts+="--feats_extract_conf win_length=${win_length} "
+            
             if [ "${feats_extract}" = fbank ]; then
                 _opts+="--feats_extract_conf fs=${fs} "
                 _opts+="--feats_extract_conf fmin=${fmin} "
@@ -757,11 +761,14 @@ if ! "${skip_train}"; then
             _teacher_valid_dir="${teacher_dumpdir}/${valid_set}"
             _fold_length="${speech_fold_length}"
             _opts+="--train_data_path_and_name_and_type ${_train_dir}/text,text,text "
-            #_opts+="--train_data_path_and_name_and_type ${_teacher_train_dir}/durations,durations,text_int "
             _opts+="--train_shape_file ${tts_stats_dir}/train/text_shape.${token_type} "
             _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/text,text,text "
-            #_opts+="--valid_data_path_and_name_and_type ${_teacher_valid_dir}/durations,durations,text_int "
             _opts+="--valid_shape_file ${tts_stats_dir}/valid/text_shape.${token_type} "
+
+            _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/clusters_d,durations,text_int "
+            _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/clusters_d,durations,text_int "
+            _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/pitch,pitch,text_int "
+            _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/pitch,pitch,text_int "
 
             if [ -e ${_teacher_train_dir}/probs ]; then
                 # Knowledge distillation case: use the outputs of the teacher model as the target
@@ -867,6 +874,8 @@ if ! "${skip_train}"; then
         else
             jobname="${tts_exp}/train.log"
         fi
+
+        echo "$_opts" > /tmp/opts
         # shellcheck disable=SC2086
         ${python} -m espnet2.bin.launch \
             --cmd "${cuda_cmd} --name ${jobname}" \
