@@ -72,13 +72,15 @@ class Decoder(torch.nn.Module):
             torch.nn.ReLU(),
             torch.nn.Linear(512, 512),
         )
-        self.acoustic_attention_rnn = torch.nn.GRU(768, 512, batch_first=True)
-        self.acoustic_attn = MOLAttn(512, 512, self.adim)
+        adim_hidden = 512
+        self.adim_hidden = adim_hidden
+        self.acoustic_attention_rnn = torch.nn.GRU(enc_odim + adim_hidden, adim_hidden, batch_first=True)
+        self.acoustic_attn = MOLAttn(adim_hidden, adim_hidden, self.adim)
 
-        self.prosody_attention_rnn = torch.nn.GRU(768, 512, batch_first=True)
-        self.prosody_attn = MOLAttn(512, 512, self.adim)
+        self.prosody_attention_rnn = torch.nn.GRU(enc_odim + adim_hidden, adim_hidden, batch_first=True)
+        self.prosody_attn = MOLAttn(adim_hidden, adim_hidden, self.adim)
 
-        self.residual_decoders = torch.nn.LSTM(1536, 512, num_layers=1, batch_first=True)
+        self.residual_decoders = torch.nn.LSTM(enc_odim + adim_hidden, adim_hidden, num_layers=1, batch_first=True)
 
         #self.zoneout = ZoneOutCell(self.residual_decoders, zoneout_rate)
 
@@ -121,28 +123,35 @@ class Decoder(torch.nn.Module):
 
         logits_all = []
 
-        output = torch.zeros(batch_size, 1, 512).to(device)
-        acoustic_context = torch.zeros(batch_size, 1, 256).to(device)
+        acoustic_output = torch.zeros(batch_size, 1, self.enc_odim).to(device)
+        acoustic_context = torch.zeros(batch_size, 1, self.adim_hidden).to(device)
+        acoustic_state = torch.zeros(1,batch_size, self.adim_hidden).to(device)
+        
+        prosody_output = torch.zeros(batch_size, 1, 512).to(device)
         prosody_context = torch.zeros(batch_size, 1, 256).to(device)
         prosody_state = torch.zeros(1,batch_size, 512).to(device)
-        acoustic_state = torch.zeros(1,batch_size, 512).to(device)
+        
 
         # for every decoder step
         weights = []
         for i in range(decoder_steps):
             # first, decode acoustic features
-            acoustic_input = torch.cat([output, acoustic_context], 2)
+            acoustic_input = torch.cat([acoustic_output, acoustic_context], 2)
             acoustic_output, acoustic_state = self.acoustic_attention_rnn(acoustic_input, acoustic_state)
             acoustic_context, _, _ = self.acoustic_attn(acoustic_state, enc_z, device=enc_z.device)
             residual_acoustic_input = torch.cat([acoustic_context, acoustic_state.transpose(0,1)], 2)
             
             # next, decode prosody features
-            prosody_input = torch.cat([output, prosody_context], 2)
-            prosody_output, prosody_state = self.prosody_attention_rnn(prosody_input, prosody_state)
-            prosody_context, _, _ = self.prosody_attn(prosody_state, enc_z, device=enc_z.device)
-            residual_prosody_input = torch.cat([prosody_context, prosody_state.transpose(0,1)],2)
+            # prosody_input = torch.cat([prosody_output, prosody_context], 2)
+            # prosody_output, prosody_state = self.prosody_attention_rnn(prosody_input, prosody_state)
+            # prosody_context, _, _ = self.prosody_attn(prosody_state, enc_z, device=enc_z.device)
+            # residual_prosody_input = torch.cat([prosody_context, prosody_state.transpose(0,1)],2)
 
-            residual_input = torch.cat([residual_acoustic_input, residual_prosody_input],dim=2)
+            # residual_input = torch.cat([residual_acoustic_input, residual_prosody_input],dim=2)
+            residual_input = residual_acoustic_input
+
+            #residual_out, (self.residual_c, self.residual_s) = self.residual_decoders(
+            #    residual_input, (self.residual_c, self.residual_s) if i > 0 else None)
 
             residual_out, (self.residual_c, self.residual_s) = self.residual_decoders(
                 residual_input, (self.residual_c, self.residual_s) if i > 0 else None)
@@ -204,27 +213,39 @@ class Decoder(torch.nn.Module):
 
         device = enc_z.device
 
+        outs = []
+
+        logits_all = []
+
         output = torch.zeros(batch_size, 1, 512).to(device)
-        context = torch.zeros(batch_size, 1, 256).to(device)
-        state = torch.zeros(1,batch_size, 512).to(device)
+        acoustic_context = torch.zeros(batch_size, 1, 256).to(device)
+        prosody_context = torch.zeros(batch_size, 1, 256).to(device)
+        prosody_state = torch.zeros(1,batch_size, 512).to(device)
+        acoustic_state = torch.zeros(1,batch_size, 512).to(device)
 
+        # for every decoder step
+        weights = []
         while True:
-
-            input = torch.cat([output, context], 2)
+            # first, decode acoustic features
+            acoustic_input = torch.cat([output, acoustic_context], 2)
+            acoustic_output, acoustic_state = self.acoustic_attention_rnn(acoustic_input, acoustic_state)
+            acoustic_context, _, _ = self.acoustic_attn(acoustic_state, enc_z, device=enc_z.device)
+            residual_acoustic_input = torch.cat([acoustic_context, acoustic_state.transpose(0,1)], 2)
             
-            output, state = self.attention_rnn(input, state)
+            # next, decode prosody features
+            prosody_input = torch.cat([output, prosody_context], 2)
+            prosody_output, prosody_state = self.prosody_attention_rnn(prosody_input, prosody_state)
+            prosody_context, _, _ = self.prosody_attn(prosody_state, enc_z, device=enc_z.device)
+            residual_prosody_input = torch.cat([prosody_context, prosody_state.transpose(0,1)],2)
 
-            context, _, _ = self.attn(state, enc_z, device=enc_z.device)
-
-            residual_input = torch.cat([context, state.transpose(0,1)], 2)
+            residual_input = torch.cat([residual_acoustic_input, residual_prosody_input],dim=2)
 
             residual_out, (self.residual_c, self.residual_s) = self.residual_decoders(
                 residual_input, (self.residual_c, self.residual_s) if i > 0 else None)
 
-
             last_proj = self.proj_out(residual_out)
             outs += [last_proj]
-
+            
             # get logits for probability of stop token
             stop_prob = self.stop_prob(last_proj)
 

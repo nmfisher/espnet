@@ -195,13 +195,10 @@ class HQSS(AbsTTS):
         # forward pass
         hs, hlens = self.enc(xs, ilens)
 
-        #print(f"{ilens} {durations.size()} {pitch.size()} {durations_lengths}")
-
-        prosody_enc = self.prosody_enc(durations, pitch, durations_lengths)
+        #prosody_enc = self.prosody_enc(durations, pitch, durations_lengths)
+        prosody_enc =None
 
         after_outs, before_outs, logits, weights = self.dec(hs, prosody_enc, ys)
-
-#        self._plot_and_save_attention([w[0,:,:] for w in weights], "/tmp/attn.png", xtokens=list(range(len(weights))))
 
         # calculate loss (for HQSS we have copied all potential loss functions but we only use L1)
         l1_loss, mse_loss, bce_loss = self.hqss_loss(
@@ -231,6 +228,9 @@ class HQSS(AbsTTS):
     def inference(
         self,
         text: torch.Tensor,
+        durations:torch.Tensor,
+        durations_lengths:torch.Tensor,
+        pitch:torch.Tensor,
         feats: Optional[torch.Tensor] = None,
         threshold: float = 0.5,
         minlenratio: float = 0.0,
@@ -265,17 +265,16 @@ class HQSS(AbsTTS):
         # add eos at the last of sequence
         x = F.pad(x, [0, 1], "constant", self.eos)
 
-        # inference
-        h = self.enc.inference(x)
-    
-        out, attn_w = self.dec.inference(
-            h,
-            threshold=threshold,
-            minlenratio=minlenratio,
-            maxlenratio=maxlenratio,
-        )
+        # make labels for stop prediction
+        
+        # forward pass
+        hs  = self.enc.inference(x)
 
-        return dict(feat_gen=out, prob=None, att_w=None)
+        prosody_enc = self.prosody_enc.inference(durations, pitch)
+
+        after_outs, _ = self.dec.inference(hs, prosody_enc)
+
+        return dict(feat_gen=after_outs, prob=None, att_w=None)
 
     def _plot_and_save_attention(self, att_w, filename, xtokens=None, ytokens=None):
         import matplotlib

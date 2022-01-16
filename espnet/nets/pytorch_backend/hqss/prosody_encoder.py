@@ -110,7 +110,7 @@ class ProsodyEncoder(torch.nn.Module):
 
         return xs_cbhg, hlens
 
-    def inference(self, x):
+    def inference(self, durations, pitch):
         """Inference.
 
         Args:
@@ -121,7 +121,32 @@ class ProsodyEncoder(torch.nn.Module):
             Tensor: The sequences of encoder states(T, eunits).
 
         """
-        xs = x.unsqueeze(0)
-        ilens = torch.tensor([x.size(0)])
+        #xs = x.unsqueeze(0)
         
-        return self.forward(xs, ilens)[0][0]
+        
+        #return self.forward(xs, ilens)[0][0]
+        durations = durations.unsqueeze(0)
+        pitch = pitch.unsqueeze(0)
+
+        ilens = torch.tensor([durations.size(0)])
+
+        return self.forward(durations, pitch, ilens)
+        durations_emb = self.duration_embed(durations)
+        pitch_emb = self.pitch_embed(pitch)
+
+        xs_emb = torch.cat([durations_emb, pitch_emb],2)
+
+        xs_pre = self.prenet(xs_emb)
+
+        if not isinstance(ilens, torch.Tensor):
+            ilens = torch.tensor(ilens)
+
+        cbhg_out = xs_pre
+        
+        for i in six.moves.range(len(self.convs)):
+            cbhg_out, _ = self.convs[i](cbhg_out, ilens)
+        
+        xs_cbhg = pack_padded_sequence(cbhg_out, ilens.cpu(), batch_first=True, enforce_sorted=False)
+        xs_cbhg, hlens = pad_packed_sequence(xs_cbhg, batch_first=True)
+
+        return xs_cbhg, hlens
