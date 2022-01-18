@@ -41,7 +41,7 @@ class Encoder(torch.nn.Module):
         input_layer="embed",
         embed_dim=512,
         cbhg_layers=1,
-        prenet_layers=2,
+        prenet_layers=1,
         prenet_units=256,
         econv_chans=512,
         use_batch_norm=True,
@@ -65,8 +65,8 @@ class Encoder(torch.nn.Module):
 
         # define network layer modules
         self.embed = torch.nn.Embedding(idim, embed_dim, padding_idx=padding_idx)
-        prenet_units = 512
-        self.prenet = Prenet(embed_dim, n_layers=prenet_layers, n_units=prenet_units)
+
+        self.prenet = Prenet(embed_dim, n_layers=prenet_layers, n_units=prenet_units, dropout_rate=dropout_rate)
 
         self.convs = torch.nn.ModuleList()
         for layer in six.moves.range(cbhg_layers):
@@ -92,8 +92,9 @@ class Encoder(torch.nn.Module):
             LongTensor: Batch of lengths of each sequence (B,)
 
         """
+        
         xs_emb = self.embed(xs)
-
+        
         xs_pre = self.prenet(xs_emb)
 
         if not isinstance(ilens, torch.Tensor):

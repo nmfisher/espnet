@@ -25,6 +25,8 @@ from espnet2.torch_utils.device_funcs import force_gatherable
 
 from espnet2.tts.abs_tts import AbsTTS
 
+from espnet.nets.pytorch_backend.hqss.postnet import Postnet
+
 class HQSS(AbsTTS):
     """HQSS  module for end-to-end text-to-speech."""
     def __init__(
@@ -42,7 +44,7 @@ class HQSS(AbsTTS):
         dlayers: int = 2,
         dunits: int = 1024,
         prenet_layers: int = 2,
-        prenet_units: int = 256,
+        prenet_units: int = 512,
         postnet_layers: int = 5,
         postnet_chans: int = 512,
         postnet_filts: int = 5,
@@ -129,9 +131,8 @@ class HQSS(AbsTTS):
             padding_idx=padding_idx,
         )
         self.dec = Decoder(
-            econv_chans,
-            odim,
-            adim,
+            enc_odim=econv_chans,
+            dec_odim=80,
             prenet_layers=prenet_layers,
             prenet_units=prenet_units,
             postnet_layers=postnet_layers,
@@ -139,8 +140,8 @@ class HQSS(AbsTTS):
             postnet_filts=postnet_filts,
             use_batch_norm=use_batch_norm,
             dropout_rate=dropout_rate,
-
         )
+        self.postnet = Postnet(80, 80, dropout_rate=dropout_rate)
         self.hqss_loss = HQSSLoss(
             use_masking=True,
             use_weighted_masking=False,
@@ -195,10 +196,13 @@ class HQSS(AbsTTS):
         # forward pass
         hs, hlens = self.enc(xs, ilens)
 
-        #prosody_enc = self.prosody_enc(durations, pitch, durations_lengths)
-        prosody_enc =None
+        prosody_enc, _ = self.prosody_enc(durations, pitch, durations_lengths)
 
-        after_outs, before_outs, logits, weights = self.dec(hs, prosody_enc, ys)
+        before_outs, logits, weights = self.dec(hs, prosody_enc, ys)
+
+        post_out = self.postnet(torch.transpose(before_outs, 1,2))
+
+        after_outs = torch.transpose(post_out,1,2) + before_outs 
 
         # calculate loss (for HQSS we have copied all potential loss functions but we only use L1)
         l1_loss, mse_loss, bce_loss = self.hqss_loss(
@@ -270,11 +274,26 @@ class HQSS(AbsTTS):
         # forward pass
         hs  = self.enc.inference(x)
 
-        prosody_enc = self.prosody_enc.inference(durations, pitch)
+        # if x.size() == 19:
+        #   durations = torch.LongTensor([int(x) for x in "14 6 3 0 11 0 11 3 13 4 13 3 5 6 13 14 5 14".split(" ")]).to(x.device)
+        #   pitch = torch.LongTensor("8 3 5 4 6 10 7 8 8 0 9 12 13 10 7 8 8 8".split(" ")).to(x.device)
+        # elif x.size() == 20:
+        #   durations = torch.LongTensor([int(x) for x in "14 6 3 1 13 0 11 3 14 10 6 1 11 4 11 14 14 11 14".split(" ")]).to(x.device)
+        #   pitch = torch.LongTensor([int(x) for x in "8 3 2 0 9 11 8 6 1 8 8 0 10 14 3 7 1 8 8".split(" ")]).to(x.device)
+        # else:
+        #   raise Exception()
 
-        after_outs, _ = self.dec.inference(hs, prosody_enc)
+        prosody_enc, _ = self.prosody_enc.inference(durations, pitch)
+        
+        before_outs, logits = self.dec.inference(hs, prosody_enc)
 
-        return dict(feat_gen=after_outs, prob=None, att_w=None)
+        before_outs = before_outs.unsqueeze(0)
+
+        post_out = self.postnet(torch.transpose(before_outs, 1,2))
+        
+        after_outs = torch.transpose(post_out,1,2) + before_outs 
+
+        return dict(feat_gen=after_outs.squeeze(0), prob=None, att_w=None)
 
     def _plot_and_save_attention(self, att_w, filename, xtokens=None, ytokens=None):
         import matplotlib

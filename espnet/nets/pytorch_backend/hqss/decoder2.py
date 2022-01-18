@@ -6,6 +6,7 @@
 
 """HQSS decoder related modules."""
 
+from unicodedata import bidirectional
 import six
 
 import torch
@@ -13,6 +14,8 @@ import torch.nn.functional as F
 
 from espnet.nets.pytorch_backend.hqss.mol_attn2 import MOLAttn
 from espnet.nets.pytorch_backend.hqss.zoneout import ZoneOutCell
+from espnet.nets.pytorch_backend.hqss.prenet import Prenet
+from espnet.nets.pytorch_backend.hqss.postnet import Postnet
 
 
 def decoder_init(m):
@@ -28,12 +31,11 @@ class Decoder(torch.nn.Module):
 
     def __init__(
         self,
-        enc_odim,
-        dec_odim,
-        adim,
+        enc_odim=128,
+        dec_odim=80,
         rnn_units=1024,
         prenet_layers=2,
-        prenet_units=256,
+        prenet_units=512,
         postnet_layers=5,
         postnet_chans=512,
         postnet_filts=5,
@@ -65,29 +67,32 @@ class Decoder(torch.nn.Module):
         # store the hyperparameters
         self.enc_odim = enc_odim
         self.dec_odim = dec_odim
-        self.adim = adim
 
-        self.proj_in = torch.nn.Sequential(
-            torch.nn.Linear(80, 512),
-            torch.nn.ReLU(),
-            torch.nn.Linear(512, 512),
-        )
-        adim_hidden = 512
-        self.adim_hidden = adim_hidden
-        self.acoustic_attention_rnn = torch.nn.GRU(enc_odim + adim_hidden, adim_hidden, batch_first=True)
-        self.acoustic_attn = MOLAttn(adim_hidden, adim_hidden, self.adim)
+        self.dropout_rate = dropout_rate
 
-        self.prosody_attention_rnn = torch.nn.GRU(enc_odim + adim_hidden, adim_hidden, batch_first=True)
-        self.prosody_attn = MOLAttn(adim_hidden, adim_hidden, self.adim)
+        self.attn_rnn_hdim = 256
+        self.residual_rnn_hdim = 256
+        self.attn_rnn_idim = prenet_units + self.enc_odim
+        
+        self.acoustic_attention_rnn = torch.nn.GRU(
+            self.attn_rnn_idim, self.attn_rnn_hdim, batch_first=True, bidirectional=True)
+        self.acoustic_attn = MOLAttn(self.attn_rnn_hdim * 2, num_dists=5)
 
-        self.residual_decoders = torch.nn.LSTM(enc_odim + adim_hidden, adim_hidden, num_layers=1, batch_first=True)
+        self.prosody_attention_rnn = torch.nn.GRU(
+            self.attn_rnn_idim, self.attn_rnn_hdim, batch_first=True, bidirectional=True)
+        self.prosody_attn = MOLAttn(self.attn_rnn_hdim * 2, num_dists=5)
 
-        #self.zoneout = ZoneOutCell(self.residual_decoders, zoneout_rate)
+        print(f"hdim {self.attn_rnn_hdim} encodim {self.enc_odim}")
+
+        self.residual_decoders = torch.nn.LSTM(
+            2*((2*self.attn_rnn_hdim) + self.enc_odim), self.residual_rnn_hdim, num_layers=1, batch_first=True, bidirectional=True)
+
+        self.zoneout = ZoneOutCell(self.residual_decoders, zoneout_rate)
+
+        self.pre_in = Prenet(self.dec_odim, n_units=prenet_units, dropout_rate=dropout_rate)
 
         self.proj_out = torch.nn.Sequential(
-            torch.nn.Linear(512, self.dec_odim),
-            torch.nn.ReLU(),
-            torch.nn.Linear(self.dec_odim, self.dec_odim),
+            torch.nn.Linear(self.residual_rnn_hdim * 2, self.dec_odim),
         )
 
         # FC for stop-token logits
@@ -123,52 +128,68 @@ class Decoder(torch.nn.Module):
 
         logits_all = []
 
-        acoustic_output = torch.zeros(batch_size, 1, self.enc_odim).to(device)
-        acoustic_context = torch.zeros(batch_size, 1, self.adim_hidden).to(device)
-        acoustic_state = torch.zeros(1,batch_size, self.adim_hidden).to(device)
-        
-        prosody_output = torch.zeros(batch_size, 1, 512).to(device)
-        prosody_context = torch.zeros(batch_size, 1, 256).to(device)
-        prosody_state = torch.zeros(1,batch_size, 512).to(device)
-        
-
         # for every decoder step
         weights = []
+
+        acoustic_context = torch.zeros(batch_size, 1, enc_z.size()[2]).to(device)
+        prosody_context = torch.zeros(batch_size, 1, enc_p.size()[2]).to(device)
+
         for i in range(decoder_steps):
-            # first, decode acoustic features
-            acoustic_input = torch.cat([acoustic_output, acoustic_context], 2)
-            acoustic_output, acoustic_state = self.acoustic_attention_rnn(acoustic_input, acoustic_state)
-            acoustic_context, _, _ = self.acoustic_attn(acoustic_state, enc_z, device=enc_z.device)
-            residual_acoustic_input = torch.cat([acoustic_context, acoustic_state.transpose(0,1)], 2)
+            last_out = self.pre_in(ys[:,i-1,:].unsqueeze(1) if i > 0 else torch.zeros(batch_size, 1, self.dec_odim).to(device))
             
-            # next, decode prosody features
-            # prosody_input = torch.cat([prosody_output, prosody_context], 2)
-            # prosody_output, prosody_state = self.prosody_attention_rnn(prosody_input, prosody_state)
-            # prosody_context, _, _ = self.prosody_attn(prosody_state, enc_z, device=enc_z.device)
-            # residual_prosody_input = torch.cat([prosody_context, prosody_state.transpose(0,1)],2)
+            # acoustic features
+            acoustic_attn_in = torch.cat([last_out, acoustic_context], 2) if i > 0 else torch.zeros(
+                batch_size, 1, self.attn_rnn_idim)
+            
+            acoustic_attn_in = acoustic_attn_in.to(device)
+            
+            acoustic_attn_rnn_out, acoustic_attn_rnn_state = self.acoustic_attention_rnn(
+                acoustic_attn_in, acoustic_attn_rnn_state if i > 0 else None)
+            
+            acoustic_state_unbound = torch.unbind(acoustic_attn_rnn_state,0)
+            
+            acoustic_state_unbound = torch.cat(acoustic_state_unbound, 1).unsqueeze(1)
+            
+            acoustic_context, acoustic_attn_probs = self.acoustic_attn(acoustic_state_unbound, enc_p, device=device)
 
-            # residual_input = torch.cat([residual_acoustic_input, residual_prosody_input],dim=2)
-            residual_input = residual_acoustic_input
+            acoustic_residual_in = torch.cat([acoustic_context, acoustic_attn_rnn_out], 2).to(device)
 
-            #residual_out, (self.residual_c, self.residual_s) = self.residual_decoders(
-            #    residual_input, (self.residual_c, self.residual_s) if i > 0 else None)
+            # prosody features
+            prosody_attn_in = torch.cat([last_out, prosody_context], 2) if i > 0 else torch.zeros(
+                batch_size, 1, self.attn_rnn_idim)
+            
+            prosody_attn_in = prosody_attn_in.to(device)
+            
+            prosody_attn_rnn_out, prosody_attn_rnn_state = self.prosody_attention_rnn(
+                prosody_attn_in, prosody_attn_rnn_state if i > 0 else None)
+            
+            prosody_state_unbound = torch.unbind(prosody_attn_rnn_state,0)
+            
+            prosody_state_unbound = torch.cat(prosody_state_unbound, 1).unsqueeze(1)
+            
+            prosody_context, prosody_attn_probs = self.prosody_attn(prosody_state_unbound, enc_z, device=device)
 
-            residual_out, (self.residual_c, self.residual_s) = self.residual_decoders(
-                residual_input, (self.residual_c, self.residual_s) if i > 0 else None)
+            prosody_residual_in = torch.cat([prosody_context, prosody_attn_rnn_out], 2).to(device)
 
-            last_proj = self.proj_out(residual_out)
-            outs += [last_proj]
-            logits = self.stop_prob(last_proj)
+            # residual decoder
+            residual_in = torch.cat([acoustic_residual_in, prosody_residual_in], 2)
 
-            logits_all += [logits]
+            residual_out, (residual_h, residual_c) = self.zoneout(
+                residual_in, (residual_h, residual_c) if i > 0 else None)
+
+            outs += [self.proj_out(residual_out)]
+            logits_all += [self.stop_prob(outs[-1])]
+
         outs = torch.cat(outs, 1).to(device)
+
         logits_all = torch.cat(logits_all, dim=1)
 
-        return outs, outs, torch.squeeze(logits_all, 2).to(device), weights
+        return outs, torch.squeeze(logits_all, 2).to(device), weights
 
     def inference(
         self,
-        h,
+        enc_z,
+        enc_p,
         threshold=0.5,
         minlenratio=0.0,
         maxlenratio=500.0,
@@ -199,59 +220,70 @@ class Decoder(torch.nn.Module):
 
         """
         # setup
-        assert len(h.size()) == 2
-        device = h.device
-        enc_z = h.unsqueeze(0)
-        ilens = [h.size(0)]
-        maxlen = int(h.size(0) * maxlenratio)
-        minlen = int(h.size(0) * minlenratio)
+        assert len(enc_z.size()) == 2
+        device = enc_z.device
+        enc_z = enc_z.unsqueeze(0)
+        ilens = [enc_z.size(0)]
+        maxlen = int(enc_z.size(0) * maxlenratio)
+        minlen = int(enc_z.size(0) * minlenratio)
         batch_size = 1
 
         # loop for an output sequence
-        i = 0
         outs = []
 
         device = enc_z.device
 
-        outs = []
 
-        logits_all = []
-
-        output = torch.zeros(batch_size, 1, 512).to(device)
-        acoustic_context = torch.zeros(batch_size, 1, 256).to(device)
-        prosody_context = torch.zeros(batch_size, 1, 256).to(device)
-        prosody_state = torch.zeros(1,batch_size, 512).to(device)
-        acoustic_state = torch.zeros(1,batch_size, 512).to(device)
-
-        # for every decoder step
-        weights = []
+        
+        acoustic_context = torch.zeros(batch_size, 1, enc_z.size()[2]).to(device)
+        prosody_context = torch.zeros(batch_size, 1, enc_p.size()[2]).to(device)
+        i = 0
         while True:
-            # first, decode acoustic features
-            acoustic_input = torch.cat([output, acoustic_context], 2)
-            acoustic_output, acoustic_state = self.acoustic_attention_rnn(acoustic_input, acoustic_state)
-            acoustic_context, _, _ = self.acoustic_attn(acoustic_state, enc_z, device=enc_z.device)
-            residual_acoustic_input = torch.cat([acoustic_context, acoustic_state.transpose(0,1)], 2)
+            last_out = self.pre_in(outs[-1] if i > 0 else torch.zeros(batch_size, 1, self.dec_odim).to(device))
             
-            # next, decode prosody features
-            prosody_input = torch.cat([output, prosody_context], 2)
-            prosody_output, prosody_state = self.prosody_attention_rnn(prosody_input, prosody_state)
-            prosody_context, _, _ = self.prosody_attn(prosody_state, enc_z, device=enc_z.device)
-            residual_prosody_input = torch.cat([prosody_context, prosody_state.transpose(0,1)],2)
-
-            residual_input = torch.cat([residual_acoustic_input, residual_prosody_input],dim=2)
-
-            residual_out, (self.residual_c, self.residual_s) = self.residual_decoders(
-                residual_input, (self.residual_c, self.residual_s) if i > 0 else None)
-
-            last_proj = self.proj_out(residual_out)
-            outs += [last_proj]
+            # acoustic features
+            acoustic_attn_in = torch.cat([last_out, acoustic_context], 2) if i > 0 else torch.zeros(
+                batch_size, 1, self.attn_rnn_idim)
             
-            # get logits for probability of stop token
-            stop_prob = self.stop_prob(last_proj)
+            acoustic_attn_in = acoustic_attn_in.to(device)
+            
+            acoustic_attn_rnn_out, acoustic_attn_rnn_state = self.acoustic_attention_rnn(
+                acoustic_attn_in, acoustic_attn_rnn_state if i > 0 else None)
+            
+            acoustic_state_unbound = torch.unbind(acoustic_attn_rnn_state,0)
+            
+            acoustic_state_unbound = torch.cat(acoustic_state_unbound, 1).unsqueeze(1)
+            
+            acoustic_context, acoustic_attn_probs = self.acoustic_attn(acoustic_state_unbound, enc_p, device=device)
 
-            # update decoder step
-            i += 1
+            acoustic_residual_in = torch.cat([acoustic_context, acoustic_attn_rnn_out], 2).to(device)
 
+            # prosody features
+            prosody_attn_in = torch.cat([last_out, prosody_context], 2) if i > 0 else torch.zeros(
+                batch_size, 1, self.attn_rnn_idim)
+            
+            prosody_attn_in = prosody_attn_in.to(device)
+            
+            prosody_attn_rnn_out, prosody_attn_rnn_state = self.prosody_attention_rnn(
+                prosody_attn_in, prosody_attn_rnn_state if i > 0 else None)
+            
+            prosody_state_unbound = torch.unbind(prosody_attn_rnn_state,0)
+            
+            prosody_state_unbound = torch.cat(prosody_state_unbound, 1).unsqueeze(1)
+            
+            prosody_context, prosody_attn_probs = self.prosody_attn(prosody_state_unbound, enc_z, device=device)
+
+            prosody_residual_in = torch.cat([prosody_context, prosody_attn_rnn_out], 2).to(device)
+
+            # residual decoder
+            residual_in = torch.cat([acoustic_residual_in, prosody_residual_in], 2)
+
+            residual_out, (residual_h, residual_c) = self.zoneout(
+                residual_in, (residual_h, residual_c) if i > 0 else None)
+
+            outs += [self.proj_out(residual_out)]
+        
+            stop_prob = self.stop_prob(outs[-1])
             # check whether to finish generation
             if int(stop_prob) > 0 or i >= 1000:
 
@@ -262,8 +294,13 @@ class Decoder(torch.nn.Module):
                     print("Stopped due to stop prob")
                 else:
                     print("Stopped due to max len")
+                outs = torch.cat(outs, 1)
+                #post_out = self.post(outs.transpose(1,2))
 
-                return torch.squeeze(torch.cat(outs, 1)), None
+                after_outs = outs  # + post_out.transpose(1,2)
+                return torch.squeeze(after_outs), None
+            i += 1
+
 
     def calculate_all_attentions(self, enc_z, hlens, ys):
         """Calculate all of the attention weights.

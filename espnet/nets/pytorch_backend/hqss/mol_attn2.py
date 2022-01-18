@@ -10,38 +10,26 @@ class MOLAttn(torch.nn.Module):
     """Mixture-of-logistics RNN attention module.
     At each timestep [i], accepts a Tensor of size B x 1 x input_dim
     Returns a Tensor
-    :param int input_dim: dimension of encoder outputs (also dim of context vector)
     :param int output_dim: dimension of decoder pre-net outputs (RNN attention layer then accept a tensor of dim (enc_odim + cdim)
-    :param int att_dim: hidden size for RNN attention layer
     :param int num_dist: number of mixture components to use
     """
 
     def __init__(
-        self, input_dim, output_dim, att_dim, num_dists=1, frames_per_step=5
+        self, idim, num_dists=1, frames_per_step=5
     ):
         super(MOLAttn, self).__init__()
-        
-        self.input_dim = input_dim
-        self.att_dim = att_dim
-        self.output_dim = output_dim
+    
         self.frames_per_step = frames_per_step
         self.num_dists = num_dists
-
-
-
-        self.proj = torch.nn.Sequential(
-            torch.nn.Linear(input_dim, input_dim),
-            torch.nn.ReLU(),
-        )
         
         # fully-connected layer for predicting logistic distribution parameters
         # mean/scale/mixture weight
         # accepts hidden state of B x S x HS
         # outputs B x S x 
         self.param_net = torch.nn.Sequential(
-                torch.nn.Linear(512, 256), 
+                torch.nn.Linear(idim, 256), 
                 torch.nn.Tanh(),
-                torch.nn.Linear(256, self.num_dists  * 3)
+                torch.nn.Linear(256, self.num_dists * 3)
             ) 
    
     def _logistic(self, x, mean, scale):
@@ -88,12 +76,13 @@ class MOLAttn(torch.nn.Module):
             alignment_probs += [ weights * (f1 - f2) ]
         
         alignment_probs = torch.cat(alignment_probs,dim=1)
-        alignment_probs = torch.sum(alignment_probs, 2)
+        
+        alignment_probs = torch.sum(alignment_probs, 2).unsqueeze(2)
 
-        weighted_enc_z = torch.unsqueeze(alignment_probs,2) * enc_z
+        #print(f"enc_z {enc_z.size()} alignment_probs {alignment_probs.size()}")
 
-        context = torch.unsqueeze(torch.sum(weighted_enc_z, dim=1), 1).to(device)
+        context = torch.sum(alignment_probs * enc_z, dim=1).unsqueeze(1).to(device)
 
-        return context, None, None
+        return context, alignment_probs
         
         
