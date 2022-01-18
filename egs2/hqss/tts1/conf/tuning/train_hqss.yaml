@@ -7,7 +7,7 @@ tts: hqss                   # model architecture
 tts_conf:                        # keyword arguments for the selected model
     embed_dim: 256               # char or phn embedding dimension
     econv_layers: 3              # number of convolutional layers in encoder
-    econv_chans: 256             # number of channels in convolutional layer
+    econv_chans: 128             # number of channels in convolutional layer
     econv_filts: 5               # filter size of convolutional layer
     adim: 256                    # attention dimension
     reduction_factor: 1
@@ -36,7 +36,7 @@ grad_noise: false           # whether to use gradient noise injection
 accum_grad: 1               # gradient accumulation
 # batch_bins: 1600000       # batch bins (for feats_type=fbank)
 #batch_bins: 1280000         # batch bins (for feats_type=raw, *= n_shift / n_mels)
-batch_size: 12
+batch_size: 32
 batch_type: unsorted
 #batch_type: numel           # how to make batch
 allow_variable_data_keys: true
