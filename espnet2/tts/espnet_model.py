@@ -230,6 +230,7 @@ class ESPnetTTSModel(AbsESPnetModel):
         sids: Optional[torch.Tensor] = None,
         lids: Optional[torch.Tensor] = None,
         durations: Optional[torch.Tensor] = None,
+        durations_lengths: Optional[torch.Tensor] = None,
         pitch: Optional[torch.Tensor] = None,
         energy: Optional[torch.Tensor] = None,
         **decode_config,
@@ -297,6 +298,11 @@ class ESPnetTTSModel(AbsESPnetModel):
             input_dict.update(sids=sids)
         if lids is not None:
             input_dict.update(lids=lids)
+        if durations is not None:
+            input_dict.update(durations=durations, durations_lengths=durations_lengths)
+        #if self.pitch_extract is not None and pitch is not None:
+        if pitch is not None:
+            input_dict.update(pitch=pitch)
 
         output_dict = self.tts.inference(**input_dict, **decode_config)
 
