@@ -964,7 +964,11 @@ if ! "${skip_eval}"; then
             if [ -n "${teacher_dumpdir}" ]; then
                 # Use groundtruth of durations
                 _teacher_dir="${teacher_dumpdir}/${dset}"
-                _ex_opts+="--data_path_and_name_and_type ${_teacher_dir}/durations,durations,text_int "
+#                _ex_opts+="--data_path_and_name_and_type ${_teacher_dir}/durations,durations,text_int "
+#                    _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/clusters_d,durations,text_int "
+                    _opts+="--data_path_and_name_and_type ${data_feats}/${valid_set}/clusters_d,durations,text_int "
+ #                   _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/pitch,pitch,text_int "
+                    _opts+="--data_path_and_name_and_type ${data_feats}/${valid_set}/pitch,pitch,text_int "
                 # Overwrite speech arguments if use knowledge distillation
                 if [ -e "${teacher_dumpdir}/${train_set}/probs" ]; then
                     _speech_data="${_teacher_dir}/denorm"
