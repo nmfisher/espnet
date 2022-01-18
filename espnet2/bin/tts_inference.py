@@ -157,6 +157,8 @@ class Text2Speech:
         text: Union[str, torch.Tensor, np.ndarray],
         speech: Union[torch.Tensor, np.ndarray] = None,
         durations: Union[torch.Tensor, np.ndarray] = None,
+        durations_lengths: Union[torch.Tensor, np.ndarray] = None,
+        pitch: Union[torch.Tensor, np.ndarray] = None,
         spembs: Union[torch.Tensor, np.ndarray] = None,
         sids: Union[torch.Tensor, np.ndarray] = None,
         lids: Union[torch.Tensor, np.ndarray] = None,
@@ -182,7 +184,9 @@ class Text2Speech:
         if speech is not None:
             batch.update(speech=speech)
         if durations is not None:
-            batch.update(durations=durations)
+            batch.update(durations=durations, durations_lengths=durations_lengths)
+        if pitch is not None:
+            batch.update(pitch=pitch)
         if spembs is not None:
             batch.update(spembs=spembs)
         if sids is not None:
