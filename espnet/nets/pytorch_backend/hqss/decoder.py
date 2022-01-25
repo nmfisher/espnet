@@ -6,38 +6,42 @@
 
 """HQSS decoder related modules."""
 
+from unicodedata import bidirectional
 import six
 
 import torch
 import torch.nn.functional as F
 
-from espnet.nets.pytorch_backend.hqss.mol_attn import MOLAttn
+from espnet.nets.pytorch_backend.hqss.zoneout import ZoneOutCell
 from espnet.nets.pytorch_backend.hqss.prenet import Prenet
 from espnet.nets.pytorch_backend.hqss.postnet import Postnet
+
 
 def decoder_init(m):
     """Initialize decoder parameters."""
     if isinstance(m, torch.nn.Conv1d):
         torch.nn.init.xavier_uniform_(m.weight, torch.nn.init.calculate_gain("tanh"))
 
+
 class Decoder(torch.nn.Module):
     """Decoder module of Spectrogram prediction network.
     This is a module of decoder of Spectrogram prediction network in HQSS
     """
+
     def __init__(
         self,
-        enc_odim,
-        dec_odim,
-        adim,
-        batch_size,
-        rnn_units=1024,
-        prenet_layers=2,
-        prenet_units=256,
-        postnet_layers=5,
-        postnet_chans=512,
-        postnet_filts=5,
+        idim,
+        odim,
+        attn,
+        attn_p,
+        dlayers=2,
+        dunits=512,
+        prenet_units=512,
+        dropout_rate=0.5,
+        zoneout_rate=0.1,
         use_batch_norm=True,
-        dropout_rate=0.5
+        spkr_embed_dim=64,
+        device="cuda"
     ):
         """Initialize HQSS decoder module.
 
@@ -61,51 +65,50 @@ class Decoder(torch.nn.Module):
         super(Decoder, self).__init__()
 
         # store the hyperparameters
-        self.enc_odim = enc_odim
-        self.dec_odim = dec_odim
-        self.attn_dim = adim
-        self.rnn_units = rnn_units
+        self.idim = idim 
+        self.odim = odim
+        self.att = attn
+        self.att_p = attn_p
+        self.dunits = dunits
 
-        # define prenet
-        self.prenet = Prenet(
-            dec_odim,
-            n_layers=prenet_layers,
-            n_units=dec_odim,
-            dropout_rate=dropout_rate,
+        self.dropout_rate = dropout_rate
+
+        self.prenet = Prenet(self.odim, n_units=prenet_units,
+                             dropout_rate=dropout_rate)
+        
+        self.lstm = torch.nn.ModuleList()
+        for layer in six.moves.range(dlayers):
+            iunits = (self.idim * 2) + prenet_units + spkr_embed_dim if layer == 0 else dunits
+            lstm = torch.nn.LSTMCell(iunits, dunits)
+            if zoneout_rate > 0.0:
+                lstm = ZoneOutCell(lstm, zoneout_rate)
+            self.lstm += [lstm]
+        
+        self.postnet = Postnet(odim, odim, dropout_rate=dropout_rate,use_batch_norm=use_batch_norm)
+        
+        iunits = (self.idim * 2) + dunits
+
+        self.feat_out = torch.nn.Linear(
+            iunits,
+            self.odim,
+            bias=False
         )
 
-        # define alignment attention RNN/attention layer
-        self.attn = MOLAttn(self.enc_odim, self.dec_odim, self.attn_dim)
+        # FC for stop-token logits
+        self.prob_out = torch.nn.Linear(iunits, 1)
 
-        # define decoder RNNs 
-        
-        # check this? if we are concatenating context + state from attention, size will be B x (enc_odim + att_dim)
-        
-        self.rnns = torch.nn.LSTM(enc_odim + self.attn_dim, self.dec_odim, num_layers=2)
-
-        # define postnet
-        self.postnet = Postnet(
-            enc_odim,
-            self.dec_odim,
-            n_layers=postnet_layers,
-            n_chans=postnet_chans,
-            n_filts=postnet_filts,
-            use_batch_norm=use_batch_norm,
-            dropout_rate=dropout_rate,
-        )
-        
-        # FC for stop-token logits 
-        # input will be 
-        self.stop_prob = torch.nn.Linear(self.dec_odim, 1)
-
-        # initialize
         self.apply(decoder_init)
 
-    def forward(self, enc_z, ys):
+    def _zero_state(self, hs):
+        init_hs = hs.new_zeros(hs.size(0), self.lstm[0].hidden_size)
+        return init_hs
+
+    def forward(self, enc_z, enc_p, ilens, ys, spk_embeds=None):
         """Calculate forward propagation.
 
         Args:
-            enc_z (Tensor): Batch of the sequences of encoder output (B, Tmax, enc_odim).
+            enc_z (Tensor): Batch of the sequences of acoustic feature encoder output (B, Tmax, enc_odim).
+            enc_p (Tensor): Batch of the sequences of prosody feature encoder output (B, Tmax, enc_odim).
             ys (Tensor):
                 Batch of the sequences of padded target features (B, Lmax, odim).
 
@@ -119,74 +122,89 @@ class Decoder(torch.nn.Module):
             This computation is performed in teacher-forcing manner.
 
         """
-        device = enc_z.device
-        batch_size = int(ys.size()[0])
-        decoder_steps = int(ys.size()[1])
+
+        ilens = list(map(int, ilens))
+
+        c_list = [self._zero_state(enc_z).to(enc_z.device)]
+        z_list = [self._zero_state(enc_z).to(enc_z.device)]
+        for _ in six.moves.range(1, len(self.lstm)):
+            c_list += [self._zero_state(enc_z).to(enc_z.device)]
+            z_list += [self._zero_state(enc_z).to(enc_z.device)]
+
+        prev_out = enc_z.new_zeros(enc_z.size(0), self.odim).to(enc_z.device)
+
+        # initialize attention
+        prev_att_w = None
+        prev_att_w2 = None
+        self.att.reset()
+        self.att_p.reset()
+
+        outs = []
+        logits = []
+        att_ws = []
+        i = 0
         
-        # B x N x odim
-        after_outs_all = [] #torch.zeros(batch_size, decoder_steps, self.dec_odim, device=device)
-        before_outs_all = [] # torch.zeros(batch_size, decoder_steps, self.dec_odim, device=device)
-        logits_all = [] #torch.zeros(ys.size()[0], decoder_steps, device=device)
+        for y in ys.transpose(0, 1):
 
-        #dec_z = torch.zeros(batch_size, decoder_steps, self.dec_odim,device=device)
-        rnn_c = torch.zeros(2, batch_size,  self.dec_odim, device=device)
-        rnn_s = torch.zeros(2, batch_size, self.dec_odim, device=device)
-        # for every decoder step
-        for i in range(decoder_steps):
-            # apply prenet to last decoder output
-            # (or if the first decoder step, apply to a zero frame)
-            prenet_output = self.prenet(ys[:,i])
+            att_c, att_w = self.att(enc_z, ilens, z_list[0], prev_att_w)
 
-            # pass:
-            # - encoder outputs for all timesteps,
-            # - pre-net output, and
-            # - index of current decoder timestep
-            # to MOL attention layer.
-            # returns context (B x enc_odim) and state (B x att_dim)    
-            context, state, attn_w = self.attn(enc_z, prenet_output, i) 
+            att_c2, att_w2 = self.att(enc_p, ilens, z_list[0], prev_att_w2)
 
-            rnn_input = torch.cat([context, state], dim=2).to(device)
-            #rnn_c = context
-            #rnn_s = state
+            i += 1
 
-            # pass through downstream decoder layers
-            before_outs, (rnn_c, rnn_s) = self.rnns(rnn_input, (rnn_c, rnn_s))
-
-            # get logits for probability of stop token
-            logits = self.stop_prob(before_outs)
-
-            before_outs = torch.transpose(before_outs, 0,1)
-            before_outs = torch.transpose(before_outs, 1,2)
-
-            # run through postnet
-            #p_out = self.postnet(before_outs)
+            prenet_out = self.prenet(prev_out)
             
-            # and add
-            after_outs = before_outs # + p_out # (B, odim, Lmax)
+            # print(spk_embeds.size())
             
-            after_outs_all += [ after_outs.transpose(1,2).to(device) ]
-            before_outs_all += [ before_outs.transpose(1,2) ]
-            logits_all += [ torch.squeeze(logits, 0) ]
+            xs = torch.cat([
+              att_c,
+              att_c2, 
+              prenet_out,
+              spk_embeds.squeeze(1)
+            ], dim=1).to(enc_z.device)
+            
+            z_list[0], c_list[0] = self.lstm[0](xs, (z_list[0], c_list[0]))
 
-        # TODO - reduction factor? 
-        # the decoder will produce r frames every step
-        # decoder_steps = int(ys.size()[1] / self.frames_per_step)
+            for i in six.moves.range(1, len(self.lstm)):
+                z_list[i], c_list[i] = self.lstm[i](
+                    z_list[i - 1], (z_list[i], c_list[i])
+                )
 
-        # acoustic inputs to the attention RNN will be the rth frames in dec_z
-        # add a zero frame for the very first decoder step
-        #attn_acoustic_inputs = torch.cat([torch.zeros(batch_size, dec_z.size()[2]), dec_z[:, ::decoder_steps]
+            zcs = torch.cat([z_list[-1], att_c, att_c2], dim=1)
 
-        return torch.cat(after_outs_all, dim=1).to(device), torch.cat(before_outs_all, dim=1).to(device), torch.cat(logits_all, dim=1).to(device)
+            outs += [self.feat_out(zcs).view(enc_z.size(0), self.odim, -1)]
+            logits += [self.prob_out(zcs)]
+            att_ws += [att_w[0] if isinstance(att_w, tuple) else att_w ]
+
+            prev_att_w = att_w 
+
+            prev_out = y
+
+        logits = torch.cat(logits, dim=1)
+
+        before_outs = torch.cat(outs, dim=2)
+        
+        att_ws = torch.stack(
+            att_ws, dim=1
+        ).to(enc_z.device)  # (B, Lmax, Tmax)
+        
+        post_out = self.postnet(before_outs)
+
+        after_outs = before_outs + post_out
+
+        return after_outs.transpose(1, 2), before_outs.transpose(1, 2), logits, att_ws
 
     def inference(
         self,
-        h,
+        enc_z,
+        enc_p,
         threshold=0.5,
-        minlenratio=0.0,
-        maxlenratio=50.0,
+        minlen=10,
+        maxlenratio=500.0,
         use_att_constraint=False,
         backward_window=None,
         forward_window=None,
+        spk_embeds=None
     ):
         """Generate the sequence of features given the sequences of characters.
 
@@ -211,55 +229,91 @@ class Decoder(torch.nn.Module):
 
         """
         # setup
-        assert len(h.size()) == 2
-        device = h.device
-        enc_z = h.unsqueeze(0)
-        ilens = [h.size(0)]
-        maxlen = int(h.size(0) * maxlenratio)
-        minlen = int(h.size(0) * minlenratio)    
+        assert len(enc_z.size()) == 2
 
-        # loop for an output sequence
+        ilens = [enc_z.size(0)]        
+        plens = [enc_p.size(0)]
+        enc_z = enc_z.unsqueeze(0)
+        enc_p = enc_p.unsqueeze(0)
+        
+        c_list = [self._zero_state(enc_z).to(enc_z.device)]
+        z_list = [self._zero_state(enc_z).to(enc_z.device)]
+        for _ in six.moves.range(1, len(self.lstm)):
+            c_list += [self._zero_state(enc_z).to(enc_z.device)]
+            z_list += [self._zero_state(enc_z).to(enc_z.device)]
+
+
+        prev_out = enc_z.new_zeros(1, self.odim).to(enc_z.device)
+
+        # initialize attention
+        prev_att_w = None
+        prev_att_w2 = None
+        self.att.reset()
+
+        outs, att_ws, probs = [], [], []
+
         i = 0
-        outs = []
         while True:
-            # initialize hidden states of decoder
-            if i == 0:
-                prenet_input = torch.zeros(enc_z.size()[0], self.dec_odim, device=device)
+          att_c, att_w = self.att(
+              enc_z, 
+              ilens, 
+              z_list[0], 
+              prev_att_w, 
+          )
+
+          att_c2, att_w2 = self.att_p(
+              enc_p, 
+              plens, 
+              z_list[0], 
+              prev_att_w2, 
+          )
+
+          prenet_out = self.prenet(prev_out)
+
+          xs = torch.cat([
+            att_c, 
+            att_c2, 
+            prenet_out,
+            spk_embeds.squeeze(1)
+          ], dim=1).to(enc_z.device)
+            
+          z_list[0], c_list[0] = self.lstm[0](xs, (z_list[0], c_list[0]))
+          for j in six.moves.range(1, len(self.lstm)):
+              z_list[j], c_list[j] = self.lstm[j](
+                  z_list[j - 1], (z_list[j], c_list[j])
+          )
+          zcs = torch.cat([
+            z_list[-1], 
+            att_c, 
+            att_c2
+          ], dim=1) 
+
+          outs += [self.feat_out(zcs).view(enc_z.size(0), self.odim, -1)]
+
+          probs += [torch.sigmoid(self.prob_out(zcs))[0]]
+          if isinstance(att_w, tuple):
+            att_ws += [att_w[0]]
+          else:
+            att_ws += [att_w]
+
+          prev_out = outs[-1][:, :, -1]
+          
+          i += 1
+          if i >= 1000:
+            # check mininum length
+            if i < minlen:
+                continue
+            if int(probs[-1]) > 0:
+                print("Stopped due to stop prob")
             else:
-                prenet_input = torch.squeeze(outs[i-1], dim=1)
-
-            #idx += self.reduction_factor
-
-            prenet_output = self.prenet(prenet_input)
-
-            # decoder calculation
-            context, state, attn_w = self.attn(enc_z, prenet_output, i) 
-
-            rnn_input = torch.cat([context, state], dim=2).to(device)
-
-            # pass through downstream decoder layers
-            before_outs, _ = self.rnns(rnn_input)
-
-            # get logits for probability of stop token
-            stop_prob = torch.sigmoid(self.stop_prob(before_outs))
-
-            before_outs = torch.transpose(before_outs, 0,1)
-            #before_outs = torch.transpose(before_outs, 1,2)
-
-            outs += torch.unsqueeze(before_outs, dim=0)
-
-            # update decoder step
-            i += 1
-            
-            # check whether to finish generation
-            if int(stop_prob) > 0 or i >= maxlen:
-                # check mininum length
-                if i < minlen:
-                    continue
-                
-                return torch.squeeze(torch.cat(outs, 1)), attn_w
-            
-
+                print("Stopped due to max len")
+            outs = torch.cat(outs, dim=2)
+            outs = outs + self.postnet(outs)
+            probs = torch.cat(probs, 0)
+            att_ws = torch.cat(att_ws, 0)
+            break
+          
+        return outs.transpose(1,2), probs, att_ws
 
     def calculate_all_attentions(self, enc_z, hlens, ys):
         """Calculate all of the attention weights.
@@ -281,7 +335,6 @@ class Decoder(torch.nn.Module):
         if self.reduction_factor > 1:
             ys = ys[:, self.reduction_factor - 1 :: self.reduction_factor]
 
-
         # initialize hidden states of decoder
         c_list = [self._zero_state(enc_z)]
         z_list = [self._zero_state(enc_z)]
@@ -297,10 +350,7 @@ class Decoder(torch.nn.Module):
         # loop for an output sequence
         att_ws = []
         for y in ys.transpose(0, 1):
-            if self.use_att_extra_inputs:
-                att_c, att_w = self.att(enc_z, hlens, z_list[0], prev_att_w, prev_out)
-            else:
-                att_c, att_w = self.att(enc_z, hlens, z_list[0], prev_att_w)
+            att_c, att_w = self.att(enc_z, hlens, z_list[0], prev_att_w)
             att_ws += [att_w]
             prenet_out = self.prenet(prev_out) if self.prenet is not None else prev_out
             enc_z = torch.cat([att_c, prenet_out], dim=1)
@@ -310,10 +360,7 @@ class Decoder(torch.nn.Module):
                     z_list[i - 1], (z_list[i], c_list[i])
                 )
             prev_out = y  # teacher forcing
-            if self.cumulate_att_w and prev_att_w is not None:
-                prev_att_w = prev_att_w + att_w  # Note: error when use +=
-            else:
-                prev_att_w = att_w
+            prev_att_w = att_ws[0] if type(att_ws) is tuple else att_ws
 
         att_ws = torch.stack(att_ws, dim=1)  # (B, Lmax, Tmax)
 

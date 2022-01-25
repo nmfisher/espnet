@@ -46,6 +46,11 @@ mkdir -p ${logdir}
 # TODO - put sample rate/hop_len/num clusters etc into config
 nj=1
 ${cmd} JOB=1:${nj} ${logdir}/cluster_durations.JOB.log \
-    pyscripts/feats/cluster-durations.py 16000 256 15 --verbose ${verbose}  \
-    ${train_durations} ${train_transcript} ${train_clusters_out} ${valid_durations} ${valid_transcript} ${valid_clusters_out}
+    pyscripts/feats/cluster-durations.py --num_clusters 5 --verbose ${verbose}  \
+    --train_durations ${train_durations} \
+    --train_transcripts ${train_transcript} \
+    --train_outfile ${train_clusters_out} \
+    --valid_durations ${valid_durations}  \
+    --valid_transcripts ${valid_transcript} \
+    --valid_outfile ${valid_clusters_out}
 echo "DONE!"

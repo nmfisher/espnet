@@ -51,10 +51,12 @@ class HQSSLoss(torch.nn.Module):
             reduction=reduction, pos_weight=torch.tensor(bce_pos_weight)
         )
 
+        self.nll_loss = torch.nn.NLLLoss()
+
         # NOTE(kan-bayashi): register pre hook function for the compatibility
         self._register_load_state_dict_pre_hook(self._load_state_dict_pre_hook)
 
-    def forward(self, after_outs, before_outs, ys, logits, labels):
+    def forward(self, before_outs, after_outs, ys, logits, labels, spk_out, sids):
         """Calculate forward propagation.
 
         Args:
@@ -72,14 +74,16 @@ class HQSSLoss(torch.nn.Module):
 
         """
         # calculate loss
-        l1_loss = self.l1_criterion(after_outs, ys) + self.l1_criterion(before_outs, ys)
-        mse_loss = self.mse_criterion(after_outs, ys) + self.mse_criterion(
-            before_outs, ys
-        )
+        l1_loss = self.l1_criterion(before_outs, ys) + self.l1_criterion(after_outs, ys) 
+        mse_loss = self.mse_criterion(before_outs, ys) + self.mse_criterion(after_outs, ys)
         
         bce_loss = self.bce_criterion(logits, labels)
+        
+        sids = sids.squeeze(1)
+        
+        spk_loss = F.cross_entropy(spk_out, sids)
 
-        return l1_loss, mse_loss, bce_loss
+        return l1_loss, mse_loss, bce_loss, spk_loss
 
     def _load_state_dict_pre_hook(
         self,

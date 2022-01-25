@@ -14,12 +14,15 @@ import torch
 import torch.nn.functional as F
 
 from typeguard import check_argument_types
-
+from espnet.nets.pytorch_backend.rnn.attentions import AttLoc,AttLocRec
 from espnet.nets.pytorch_backend.hqss.loss import HQSSLoss
 from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
-from espnet.nets.pytorch_backend.hqss.decoder2 import Decoder
+from espnet.nets.pytorch_backend.hqss.decoder import Decoder
 from espnet.nets.pytorch_backend.hqss.encoder import Encoder
+from espnet.nets.pytorch_backend.hqss.mol_attn import MOLAttn
+from espnet.nets.pytorch_backend.hqss.speaker_classifier import SpeakerClassifier
 from espnet.nets.pytorch_backend.hqss.prosody_encoder import ProsodyEncoder
+from espnet.nets.pytorch_backend.hqss.residual_encoder import ResidualEncoder
 
 from espnet2.torch_utils.device_funcs import force_gatherable
 
@@ -35,6 +38,7 @@ class HQSS(AbsTTS):
         idim: int,
         odim: int,
         embed_dim: int = 512,
+        spkr_embed_dim: int = 64,
         econv_layers: int = 3,
         econv_chans: int = 512,
         econv_filts: int = 5,
@@ -42,7 +46,7 @@ class HQSS(AbsTTS):
         aconv_chans: int = 32,
         aconv_filts: int = 15,
         dlayers: int = 2,
-        dunits: int = 1024,
+        dunits: int = 512,
         prenet_layers: int = 2,
         prenet_units: int = 512,
         postnet_layers: int = 5,
@@ -52,12 +56,14 @@ class HQSS(AbsTTS):
         use_batch_norm: bool = True,
         use_residual: bool = False,
         # training related
-        dropout_rate: float = 0.5,
+        dropout_rate: float = 0.0,
+        zoneout_rate: float = 0.0,
         use_masking: bool = True,
         use_weighted_masking: bool = False,
         bce_pos_weight: float = 5.0,
         loss_type: str = "L1+L2",
         reduction_factor: int = 1,
+        spks: Optional[int] = None,
     ):
         """Initialize HQSS module.
 
@@ -99,14 +105,17 @@ class HQSS(AbsTTS):
         assert check_argument_types()
         super().__init__()
 
-        self.spks = None
+        #print(f"Using dropout {dropout_rate} zoneout {zoneout_rate}")
+
+        self.spks = spks
         self.langs = None
-        self.spk_embed_dim = None
+        self.spk_embed_dim = spkr_embed_dim
 
         # store hyperparameters
         self.idim = idim
         self.odim = odim
         self.eos = idim - 1
+        self.adim = adim
         
         self.loss_type = loss_type
         
@@ -124,6 +133,11 @@ class HQSS(AbsTTS):
             padding_idx=padding_idx,
         )
 
+        spks = 10
+        self.spk_embd = torch.nn.Embedding(spks, self.spk_embed_dim)
+
+        self.residual_encoder = ResidualEncoder()
+
         self.prosody_enc = ProsodyEncoder(
             econv_chans=econv_chans,
             use_batch_norm=use_batch_norm,
@@ -131,18 +145,41 @@ class HQSS(AbsTTS):
             padding_idx=padding_idx,
         )
         self.dec = Decoder(
-            enc_odim=econv_chans,
-            dec_odim=80,
-            prenet_layers=prenet_layers,
-            prenet_units=prenet_units,
-            postnet_layers=postnet_layers,
-            postnet_chans=postnet_chans,
-            postnet_filts=postnet_filts,
-            use_batch_norm=use_batch_norm,
-            dropout_rate=dropout_rate,
+            econv_chans,
+            odim,
+            AttLoc(
+              dunits,
+              dunits,
+              adim,
+              odim, 
+              5
+            ),
+            AttLoc(
+              dunits,
+              dunits,
+              adim,
+              odim, 
+              5
+            ),
+            #AttLocRec(econv_chans, 512, 512, 80, 5),
+            #MOLAttn(econv_chans, dunits, adim, num_dists=5),
+            dunits=dunits,
+            spkr_embed_dim=spkr_embed_dim
+            # enc_odim=econv_chans,
+            # dec_odim=80,
+            # prenet_layers=prenet_layers,
+            # prenet_units=prenet_units,
+            # postnet_layers=postnet_layers,
+            # postnet_chans=postnet_chans,
+            # postnet_filts=postnet_filts,
+            # use_batch_norm=use_batch_norm,
+            # dropout_rate=dropout_rate,
+            # zoneout_rate=zoneout_rate
         )
-        self.postnet = Postnet(80, 80, dropout_rate=dropout_rate)
-        self.hqss_loss = HQSSLoss(
+
+        self.speaker_classifier = SpeakerClassifier(self.odim, spks)
+        
+        self.hqss_loss = HQSSLoss(  
             use_masking=True,
             use_weighted_masking=False,
             bce_pos_weight=bce_pos_weight,
@@ -157,7 +194,7 @@ class HQSS(AbsTTS):
         durations:torch.Tensor,
         durations_lengths:torch.Tensor,
         pitch:torch.Tensor,
-        
+        sids: torch.Tensor,
     ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor]:
         """Calculate forward propagation.
 
@@ -190,30 +227,48 @@ class HQSS(AbsTTS):
 
         # make labels for stop prediction
         labels = make_pad_mask(olens - 1).to(ys.device, ys.dtype)
-
         labels = F.pad(labels, [0, 1], "constant", 1.0)
+
+        # apply residual encoder
+        #res_emb = self.residual_encoder(ys)
+
+        # get speaker embeddings
+        spkr_emb = self.spk_embd(sids)
         
-        # forward pass
-        hs, hlens = self.enc(xs, ilens)
+        # encode phone sequence
+        phone_enc, _ = self.enc(xs, ilens)
 
+        print(phone_enc.size())
+        
+        # add speaker embedding to  phone encoder output
+        #phone_enc = torch.cat([phone_enc, torch.tile(spkr_emb, [1,phone_enc.size(1),1])], 2)
+        
         prosody_enc, _ = self.prosody_enc(durations, pitch, durations_lengths)
+        
+        # add speaker embedding to prosody encoder output
+        #prosody_enc = torch.cat([prosody_enc, torch.tile(spkr_emb, [1,prosody_enc.size(1),1])], 2)
 
-        before_outs, logits, weights = self.dec(hs, prosody_enc, ys)
+        after_outs, before_outs, logits, weights = self.dec(
+          phone_enc, 
+          prosody_enc,
+          ilens, 
+          ys,
+          spkr_emb
+        )
 
-        post_out = self.postnet(torch.transpose(before_outs, 1,2))
-
-        after_outs = torch.transpose(post_out,1,2) + before_outs 
+        spk_class = self.speaker_classifier(after_outs)
 
         # calculate loss (for HQSS we have copied all potential loss functions but we only use L1)
-        l1_loss, mse_loss, bce_loss = self.hqss_loss(
-            after_outs, before_outs, ys, logits, labels
+        l1_loss, mse_loss, bce_loss, spk_loss = self.hqss_loss(
+            before_outs, after_outs, ys, logits, labels, spk_class, sids
         )
+
         if self.loss_type == "L1+L2":
-            loss = l1_loss + mse_loss + bce_loss
+            loss = l1_loss + bce_loss + mse_loss  + spk_loss 
         elif self.loss_type == "L1":
-            loss = l1_loss + bce_loss
+            loss = l1_loss + bce_loss + spk_loss 
         elif self.loss_type == "L2":
-            loss = mse_loss + bce_loss
+            loss = mse_loss + bce_loss + spk_loss 
         else:
             raise ValueError(f"unknown --loss-type {self.loss_type}")
 
@@ -232,9 +287,11 @@ class HQSS(AbsTTS):
     def inference(
         self,
         text: torch.Tensor,
+        #text_lengths: torch.Tensor,
         durations:torch.Tensor,
         durations_lengths:torch.Tensor,
         pitch:torch.Tensor,
+        sids:torch.Tensor,
         feats: Optional[torch.Tensor] = None,
         threshold: float = 0.5,
         minlenratio: float = 0.0,
@@ -264,36 +321,34 @@ class HQSS(AbsTTS):
                 * att_w (Tensor): Attention weights (T_feats, T).
 
         """
+        
         x = text     
 
         # add eos at the last of sequence
         x = F.pad(x, [0, 1], "constant", self.eos)
 
-        # make labels for stop prediction
+        #ilens = text_lengths + 1
+
+        #sids = sids.unsqueeze(1)
+
+        #res_emb = self.residual_encoder(ys)
+
+        # get speaker embeddings
+        spkr_emb = self.spk_embd(sids)
+
+        # encode phone sequence
+        phone_enc = self.enc.inference(x)
+
+        #phone_enc = torch.cat([phone_enc, torch.tile(spkr_emb, [phone_enc.size()[0],1])], 1)
+                
+        prosody_enc = self.prosody_enc.inference(durations, pitch)
         
-        # forward pass
-        hs  = self.enc.inference(x)
+        # add speaker embedding to prosody encoder output
+        #prosody_enc = torch.cat([prosody_enc, torch.tile(spkr_emb, [prosody_enc.size(0),1])], 1)
 
-        # if x.size() == 19:
-        #   durations = torch.LongTensor([int(x) for x in "14 6 3 0 11 0 11 3 13 4 13 3 5 6 13 14 5 14".split(" ")]).to(x.device)
-        #   pitch = torch.LongTensor("8 3 5 4 6 10 7 8 8 0 9 12 13 10 7 8 8 8".split(" ")).to(x.device)
-        # elif x.size() == 20:
-        #   durations = torch.LongTensor([int(x) for x in "14 6 3 1 13 0 11 3 14 10 6 1 11 4 11 14 14 11 14".split(" ")]).to(x.device)
-        #   pitch = torch.LongTensor([int(x) for x in "8 3 2 0 9 11 8 6 1 8 8 0 10 14 3 7 1 8 8".split(" ")]).to(x.device)
-        # else:
-        #   raise Exception()
-
-        prosody_enc, _ = self.prosody_enc.inference(durations, pitch)
+        outs,probs, logits = self.dec.inference(phone_enc, prosody_enc, spk_embeds=spkr_emb)
         
-        before_outs, logits = self.dec.inference(hs, prosody_enc)
-
-        before_outs = before_outs.unsqueeze(0)
-
-        post_out = self.postnet(torch.transpose(before_outs, 1,2))
-        
-        after_outs = torch.transpose(post_out,1,2) + before_outs 
-
-        return dict(feat_gen=after_outs.squeeze(0), prob=None, att_w=None)
+        return dict(feat_gen=outs.squeeze(0), prob=None, att_w=None)
 
     def _plot_and_save_attention(self, att_w, filename, xtokens=None, ytokens=None):
         import matplotlib

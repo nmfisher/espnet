@@ -22,37 +22,37 @@ def get_parser():
     #     help="n_fft used during feat extraction (this is needed as this script accepts ms durations as input, which are then converted to frames"
     # )
     parser.add_argument(
-        "sample_rate",
+        "--sample_rate",
         type=int,
         default=16000,
         help="hop_length used during feat extraction (this is needed as this script accepts ms durations as input, which are then converted to frames"
     )
     parser.add_argument(
-        "hop_length",
+        "--hop_length",
         type=int,
         default=256,
         help="hop_length used during feat extraction (this is needed as this script accepts ms durations as input, which are then converted to frames"
     )
     parser.add_argument(
-        "num_clusters", type=int, help="Number of clusters to use for durations"
+        "--num_clusters", type=int, default=5, help="Number of clusters to use for durations"
     )
     parser.add_argument(
-        "train_durations", type=str, help="Path to train durations file. e.g. data/train/durations"
+        "--train_durations", type=str, help="Path to train durations file. e.g. data/train/durations"
     )
     parser.add_argument(
-        "train_transcripts", type=str, help="Path to train transcripts. e.g. data/train/text"
+        "--train_transcripts", type=str, help="Path to train transcripts. e.g. data/train/text"
     )
     parser.add_argument(
-        "train_outfile", type=str, help="Output path for train duration cluster IDs data/train/cluster_ids"
+        "--train_outfile", type=str, help="Output path for train duration cluster IDs data/train/cluster_ids"
     )
     parser.add_argument(
-        "valid_durations", type=str, help="Path to validation durations file. e.g. data/valid/durations"
+        "--valid_durations", type=str, help="Path to validation durations file. e.g. data/valid/durations"
     )
     parser.add_argument(
-        "valid_transcripts", type=str, help="Path to valid transcripts. e.g. data/valid/text"
+        "--valid_transcripts", type=str, help="Path to valid transcripts. e.g. data/valid/text"
     )
     parser.add_argument(
-        "valid_outfile", type=str, help="Output path for validation duration cluster IDs data/train/cluster_ids"
+        "--valid_outfile", type=str, help="Output path for validation duration cluster IDs data/train/cluster_ids"
     )
     parser.add_argument(
         "out",
@@ -96,7 +96,9 @@ def main():
     durations_all = {}
 
     for (utt_id, utt_durations), (utt_id, transcript) in zip(train_durations, transcripts):
-        assert len(transcript) == len(utt_durations)
+        if len(transcript) != len(utt_durations):
+            print(utt_durations)
+            raise Exception("%s : %d %d" % (utt_id, len(transcript), len(utt_durations)))
         for phone, duration in zip(transcript, utt_durations):
             if phone not in durations_all:
                 durations_all[phone] = []
@@ -117,7 +119,9 @@ def main():
     average_durations.sort()
 
     interval_len = int(len(average_durations) / args.num_clusters)
-    
+    print(args.num_clusters)
+    print(average_durations)
+    print(interval_len) 
     clusters = average_durations[::interval_len]
 
     # finally, iterate over the original dataset against to replace the phone durations with the phone cluster IDs

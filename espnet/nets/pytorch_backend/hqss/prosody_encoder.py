@@ -93,7 +93,7 @@ class ProsodyEncoder(torch.nn.Module):
         durations_emb = self.duration_embed(durations)
         pitch_emb = self.pitch_embed(pitch)
 
-        xs_emb = torch.cat([durations_emb, pitch_emb],2)
+        xs_emb = torch.cat([durations_emb, pitch_emb],-1)
 
         xs_pre = self.prenet(xs_emb)
 
@@ -121,16 +121,12 @@ class ProsodyEncoder(torch.nn.Module):
             Tensor: The sequences of encoder states(T, eunits).
 
         """
-        #xs = x.unsqueeze(0)
-        
-        
-        #return self.forward(xs, ilens)[0][0]
         durations = durations.unsqueeze(0)
         pitch = pitch.unsqueeze(0)
 
-        ilens = torch.tensor([durations.size(0)])
+        ilens = torch.tensor([durations.size(1)])
 
-        return self.forward(durations, pitch, ilens)
+        return self.forward(durations, pitch, ilens)[0].squeeze(0)
         durations_emb = self.duration_embed(durations)
         pitch_emb = self.pitch_embed(pitch)
 

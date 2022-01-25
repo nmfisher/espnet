@@ -113,7 +113,8 @@ def extract(wavs, durations, transcripts, sample_rate, hop_length,f0_values):
                     break
 
         if len(utt_f0) != len(transcript):
-            print(f"{len(phone_f0)} {len(phone_times)}")
+            #print(f"{len(phone_f0)} {len(phone_times)}")
+            print(f"{phone_f0} {phone_times}")
             print(t)
             print(phone_times)
             print(transcript)

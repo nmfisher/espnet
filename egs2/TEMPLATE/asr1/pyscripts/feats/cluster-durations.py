@@ -73,6 +73,9 @@ def main():
     parser = get_parser()
     args = parser.parse_args()
 
+    print("PARSED ARGS" + str(args))
+    raise Exception()
+
     # logging info
     logfmt = "%(asctime)s (%(module)s:%(lineno)d) %(levelname)s: %(message)s"
     if args.verbose > 0:

@@ -123,5 +123,5 @@ class Encoder(torch.nn.Module):
         """
         xs = x.unsqueeze(0)
         ilens = torch.tensor([x.size(0)])
-        
+
         return self.forward(xs, ilens)[0][0]

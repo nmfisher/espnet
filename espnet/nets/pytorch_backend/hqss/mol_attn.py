@@ -2,119 +2,158 @@ import six
 
 import torch
 import torch.nn.functional as F
-
+import numpy as np 
 from espnet.nets.pytorch_backend.hqss.prenet import Prenet
+
+from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
+from espnet.nets.pytorch_backend.nets_utils import to_device
+
+def attn_init(m):
+    """Initialize decoder parameters."""
+    return
+    #torch.nn.init.xavier_uniform_(m.weight, torch.nn.init.calculate_gain("tanh"))
 
 
 class MOLAttn(torch.nn.Module):
     """Mixture-of-logistics RNN attention module.
     At each timestep [i], accepts a Tensor of size B x 1 x input_dim
     Returns a Tensor
-    :param int input_dim: dimension of encoder outputs (also dim of context vector)
     :param int output_dim: dimension of decoder pre-net outputs (RNN attention layer then accept a tensor of dim (enc_odim + cdim)
-    :param int att_dim: hidden size for RNN attention layer
     :param int num_dist: number of mixture components to use
     """
 
     def __init__(
-        self, input_dim, output_dim, att_dim, num_dists=5, frames_per_step=5
+        self, enc_dim, dec_dim, adim, num_dists=1, frames_per_step=5
     ):
         super(MOLAttn, self).__init__()
+        self.enc_dim = enc_dim
+        self.adim = adim
+        self.rnn = torch.nn.GRU(enc_dim + adim, adim, batch_first=True)
         
-        self.input_dim = input_dim
-        self.att_dim = att_dim
-        self.output_dim = output_dim
-        self.frames_per_step = frames_per_step
         self.num_dists = num_dists
-        self.rnn_input_dim = 512
-
-        self.rnn = torch.nn.GRU(self.rnn_input_dim, att_dim, batch_first=True)
-
         
         # fully-connected layer for predicting logistic distribution parameters
         # mean/scale/mixture weight
         # accepts hidden state of B x S x HS
         # outputs B x S x 
-        self.param_nets = [ torch.nn.Sequential(
-                torch.nn.Linear(self.att_dim, 256), 
+        self.param_net = torch.nn.Sequential(
+                torch.nn.Linear(adim, adim), 
                 torch.nn.Tanh(),
-                torch.nn.Linear(256, 3), 
-            ) for k in range(self.num_dists) 
-        ]        
+                torch.nn.Linear(adim, self.num_dists * 3)
+            ) 
+        # self.mean_net = torch.nn.Sequential(
+        #   torch.nn.Linear(adim, adim * 2), 
+        #   torch.nn.Tanh(),
+        #   torch.nn.Linear(adim * 2, 1)
+        # ) 
 
-    def _logistic(self, x, mean, scale):
-        return (1 / (1 + torch.exp((x - mean) / scale))) + 1e-6
+        # self.scale_net = torch.nn.Sequential(
+        #   torch.nn.Linear(adim, adim * 2), 
+        #   torch.nn.Tanh(),
+        #   torch.nn.Linear(adim * 2, 1)
+        # ) 
 
+        # self.weight_net = torch.nn.Sequential(
+        #   torch.nn.Linear(adim, adim * 2), 
+        #   torch.nn.Tanh(),
+        #   torch.nn.Linear(adim * 2, 1)
+        # ) 
+
+        self.dec_proj = torch.nn.Linear(dec_dim, adim, bias=False)
+
+        attn_init(self)
+
+    
+    def reset(self):
+        """reset states"""
+        self.means = []
+        self.out = None
+        self.context = None
+        self.state = None
+        self.enc_indices = None
+   
     def forward(
         self,
-        input,
-        enc_seq_len=None,
-        device=None,
-        reset=False
+        enc_z,
+        ilens,
+        dec_step,
+        att_prev
     ):
         """Calculate AttLoc forward propagation.
-        :param torch.Tensor enc_z: encoder outputs (B x N x D_dec)
-        :param torch.Tensor dec_z: last acoustic frame output (processed by decoder pre-net) (B x  D_dec)
+        :param torch.Tensor input: last acoustic frame
         :param int i: decoder step        
         :return: concatenated context + hidden state (B x N x D_dec)
         :rtype: torch.Tensor
         """
-        torch.autograd.set_detect_anomaly(True)
-        if reset:
-          self.means = []
-        #print(f"input {input.size()}")        
-        out, self.state = self.rnn(input.to(device), None if reset else self.state)
+        #torch.autograd.set_detect_anomaly(True)
+        batch = len(enc_z)
+        device = enc_z.device
+
+        if self.out is None:
+          self.out = enc_z.new_zeros(
+            enc_z.size(0), 
+            1,
+            self.adim
+          )
+          self.context = enc_z.new_zeros(
+            enc_z.size(0), 
+            1,
+            self.enc_dim
+          )
+          self.enc_indices_pos = torch.FloatTensor(np.arange(enc_z.size(1))).to(device) + 0.5
+          self.enc_indices_neg = torch.FloatTensor(np.arange(enc_z.size(1))).to(device) - 0.5
         
-        #print(f"input {input.size()} out {out.size()} selfstate {self.state.size()}")
-
-        # create placeholder for output i.e. (concatenated context + hidden state) that will be fed to downstream decoders
-        # B x N x (DX2) (where D is the dimension of the context/hidden vectors)
+        rnn_in = torch.cat([
+          self.out, 
+          self.context.view(
+            enc_z.size(0), 
+            1,
+            self.enc_dim
+          )
+        ], 2)
         
-        # pass input and hidden state to RNN
-        # returns new context vector and hidden state for this timestep
-        # during training, the input on the first decoder step will simply be a zero frame
-        # subequent steps will use the nth decoder pre-net output frame  (i.e. acoustic features passed through pre-net) with the last context vector
-        # during inference time, this is replaced with the predicted acoustic features passed through prenet
-      
-        weights = []
-        scales = []
+        out, self.state = self.rnn(
+           rnn_in,
+           self.state
+        )
 
-        means = []
-        # apply FC nets to get params for each mixture            
-        for k in range(self.num_dists):
-            param_net = self.param_nets[k].to(device)
-            params = param_net(torch.squeeze(self.state, 0))
-            
-            if reset:
-              means += [ torch.exp(params[:,0]) ]
-            else:              
-              means += [ torch.exp(params[:,0]) + self.means[-1][k]  ]
-            
-            scales += [ torch.exp(params[:,1]) ]
-            
-            weights += params[:, 2]
-        self.means += [ means ]
-        weights = torch.nn.functional.softmax(torch.Tensor(weights), dim=0)
+        self.out = out # torch.tanh(out + self.dec_proj(dec_step))
+
+        params = torch.exp(self.param_net(self.out))
+
+        alignment_probs = []
+        all_means = []
+        for j in range(self.num_dists):
+
+          if len(self.means) > 0:
+            means = params[:,:,j*3]  + self.means[-1][j]
+            # means = torch.exp(self.mean_net(self.out))  + self.means[-1]
+          else:
+            means = params[:,:,j*3]
+
+          all_means += [ means ]
+
+          # scales = torch.exp(self.scale_net(self.out)) 
+          scales = params[:,:,(j*3)+1]
+
+          # weights = F.softmax(torch.exp(self.weight_net(self.out)), dim=1)
+          weights = F.softmax(params[:,:,(j*3)+2], dim=1)
+          
+          f1 = F.sigmoid((self.enc_indices_pos - means) / scales)
+          f2 = F.sigmoid((self.enc_indices_neg - means) / scales)
+
+          alignment_probs += [ weights * (f1 - f2) ]
+        self.means += [ all_means ]
+        #print(alignment_probs[-1].size())
+        alignment_probs = torch.stack(alignment_probs, 1)
         
-        # container for encoder alignment probabilities
-        a = []
+        alignment_probs = torch.sum(alignment_probs, 1).unsqueeze(2)
         
-        # calculate alignment probabilities for each encoder timestep
-        for j in range(enc_seq_len):
-          a += [ 0 ]
-          for k in range(self.num_dists):
-            mean = means[k]
-            scale = scales[k]
+        self.context = torch.sum(
+          alignment_probs * enc_z, 
+          dim=1
+        ).to(device)
 
-            f1 = self._logistic(j + 0.5,  mean, scale)
-            f2 = self._logistic(j - 0.5, mean, scale)
-
-            step_prob = weights[k] * (f1 - f2)
-            
-            a[-1] += step_prob
-        probs = torch.cat(a,dim=-1)
+        return self.context, alignment_probs
         
-        probs = probs.reshape(input.size()[0], enc_seq_len, 1).to(device)
-        return probs, self.state, weights
-
-
+        

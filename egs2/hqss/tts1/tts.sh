@@ -578,22 +578,22 @@ if ! "${skip_train}"; then
             #_opts+="--allow_variable_data_keys true"
             ./scripts/feats/cluster_durations.sh \
               ${_teacher_train_dir}/durations \
-              ${data_feats}/${train_set}/text \
-              ${data_feats}/${train_set}/clusters_d \
-              ${_teacher_valid_dir}/durations \
-               ${data_feats}/${valid_set}/text \
-              ${data_feats}/${valid_set}/clusters_d
+               ${data_feats}/${train_set}/text \
+               ${data_feats}/${train_set}/clusters_d \
+               ${_teacher_valid_dir}/durations \
+                ${data_feats}/${valid_set}/text \
+               ${data_feats}/${valid_set}/clusters_d
 
             ./scripts/feats/cluster_f0.sh \
-              ${data_feats}/${train_set}/wav.scp \
-              ${_teacher_train_dir}/durations \
-              ${data_feats}/${train_set}/text \
-              ${data_feats}/${train_set}/pitch \
-              ${data_feats}/${valid_set}/wav.scp \
-              ${_teacher_valid_dir}/durations \
+               ${data_feats}/${train_set}/wav.scp \
+               ${_teacher_train_dir}/durations \
+               ${data_feats}/${train_set}/text \
+               ${data_feats}/${train_set}/pitch \
+               ${data_feats}/${valid_set}/wav.scp \
+               ${_teacher_valid_dir}/durations \
                ${data_feats}/${valid_set}/text \
-              ${data_feats}/${valid_set}/pitch \
-              ${f0min} ${f0max}
+               ${data_feats}/${valid_set}/pitch \
+               ${f0min} ${f0max}
         fi
 
         if "${use_xvector}"; then
@@ -965,10 +965,11 @@ if ! "${skip_eval}"; then
                 # Use groundtruth of durations
                 _teacher_dir="${teacher_dumpdir}/${dset}"
 #                _ex_opts+="--data_path_and_name_and_type ${_teacher_dir}/durations,durations,text_int "
-#                    _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/clusters_d,durations,text_int "
-                    _opts+="--data_path_and_name_and_type ${data_feats}/${valid_set}/clusters_d,durations,text_int "
- #                   _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/pitch,pitch,text_int "
-                    _opts+="--data_path_and_name_and_type ${data_feats}/${valid_set}/pitch,pitch,text_int "
+                 # _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/clusters_d,durations,text_int "
+                    
+                   #_opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/pitch,pitch,text_int "
+                _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/clusters_d,durations,text_int "
+                _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/pitch,pitch,text_int "
                 # Overwrite speech arguments if use knowledge distillation
                 if [ -e "${teacher_dumpdir}/${train_set}/probs" ]; then
                     _speech_data="${_teacher_dir}/denorm"
