@@ -11,10 +11,6 @@ import six
 
 import torch
 
-from torch.nn.utils.rnn import pack_padded_sequence
-from torch.nn.utils.rnn import pad_packed_sequence
-from espnet.nets.pytorch_backend.hqss.prenet import Prenet
-
 from espnet.nets.pytorch_backend.tacotron2.cbhg import CBHG
 from espnet.nets.pytorch_backend.tacotron2.cbhg import CBHGLoss
 

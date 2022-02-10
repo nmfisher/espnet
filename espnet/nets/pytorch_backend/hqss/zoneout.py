@@ -1,5 +1,9 @@
 import torch
 
+from typing import Optional
+from typing import Sequence
+from typing import Tuple
+
 class ZoneOutCell(torch.nn.Module):
     """ZoneOut Cell module.
 
@@ -36,8 +40,9 @@ class ZoneOutCell(torch.nn.Module):
             raise ValueError(
                 "zoneout probability must be in the range from 0.0 to 1.0."
             )
-
-    def forward(self, inputs, hidden):
+    
+    @torch.jit.export
+    def forward(self, inputs : torch.Tensor, hidden : Tuple[torch.Tensor, torch.Tensor]):
         """Calculate forward propagation.
 
         Args:
@@ -53,21 +58,16 @@ class ZoneOutCell(torch.nn.Module):
 
         """
         next_hidden = self.cell(inputs, hidden)
-        next_hidden = self._zoneout(hidden, next_hidden, self.zoneout_rate)
+        next_hidden = (
+          self._zoneout(hidden[0], next_hidden[0], self.zoneout_rate),
+          self._zoneout(hidden[1], next_hidden[1], self.zoneout_rate) 
+        )
+
         return next_hidden
 
-    def _zoneout(self, h, next_h, prob):
-        # apply recursively
-        if isinstance(h, tuple):
-            num_h = len(h)
-            if not isinstance(prob, tuple):
-                prob = tuple([prob] * num_h)
-            return tuple(
-                [self._zoneout(h[i], next_h[i], prob[i]) for i in range(num_h)]
-            )
-
+    def _zoneout(self, h : torch.Tensor, next_h, prob : float):
         if self.training:
-            mask = h.new(*h.size()).bernoulli_(prob)
+            mask = torch.zeros(h.size()).bernoulli_(prob)
             return mask * h + (1 - mask) * next_h
         else:
             return prob * h + (1 - prob) * next_h

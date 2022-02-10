@@ -76,7 +76,7 @@ class ProsodyEncoder(torch.nn.Module):
         # initialize
         self.apply(encoder_init)
 
-    def forward(self, durations, pitch, ilens=None):
+    def forward(self, durations, pitch, ilens:torch.Tensor):
         """Calculate forward propagation.
 
         Args:
@@ -97,15 +97,12 @@ class ProsodyEncoder(torch.nn.Module):
 
         xs_pre = self.prenet(xs_emb)
 
-        if not isinstance(ilens, torch.Tensor):
-            ilens = torch.tensor(ilens)
-
         cbhg_out = xs_pre
         
-        for i in six.moves.range(len(self.convs)):
-            cbhg_out, _ = self.convs[i](cbhg_out, ilens)
+        for conv in self.convs:
+            cbhg_out, _ = conv(cbhg_out, ilens)
         
-        xs_cbhg = pack_padded_sequence(cbhg_out, ilens.cpu(), batch_first=True, enforce_sorted=False)
+        xs_cbhg = pack_padded_sequence(cbhg_out, ilens, batch_first=True, enforce_sorted=False)
         xs_cbhg, hlens = pad_packed_sequence(xs_cbhg, batch_first=True)
 
         return xs_cbhg, hlens
@@ -127,22 +124,4 @@ class ProsodyEncoder(torch.nn.Module):
         ilens = torch.tensor([durations.size(1)])
 
         return self.forward(durations, pitch, ilens)[0].squeeze(0)
-        durations_emb = self.duration_embed(durations)
-        pitch_emb = self.pitch_embed(pitch)
-
-        xs_emb = torch.cat([durations_emb, pitch_emb],2)
-
-        xs_pre = self.prenet(xs_emb)
-
-        if not isinstance(ilens, torch.Tensor):
-            ilens = torch.tensor(ilens)
-
-        cbhg_out = xs_pre
         
-        for i in six.moves.range(len(self.convs)):
-            cbhg_out, _ = self.convs[i](cbhg_out, ilens)
-        
-        xs_cbhg = pack_padded_sequence(cbhg_out, ilens.cpu(), batch_first=True, enforce_sorted=False)
-        xs_cbhg, hlens = pad_packed_sequence(xs_cbhg, batch_first=True)
-
-        return xs_cbhg, hlens
