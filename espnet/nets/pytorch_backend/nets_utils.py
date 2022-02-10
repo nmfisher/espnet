@@ -8,6 +8,9 @@ from typing import Dict
 import numpy as np
 import torch
 
+from typing import Optional
+from typing import Union
+
 
 def to_device(m, x):
     """Send tensor into the device of the module.
@@ -61,7 +64,7 @@ def pad_list(xs, pad_value):
     return pad
 
 
-def make_pad_mask(lengths, xs=None, length_dim=-1, maxlen=None):
+def make_pad_mask(lengths : torch.Tensor, xs:Optional[torch.Tensor] = None, length_dim: int =-1, maxlen : Optional[int] = None):
     """Make mask tensor containing indices of padded part.
 
     Args:
@@ -150,8 +153,8 @@ def make_pad_mask(lengths, xs=None, length_dim=-1, maxlen=None):
     if length_dim == 0:
         raise ValueError("length_dim cannot be 0: {}".format(length_dim))
 
-    if not isinstance(lengths, list):
-        lengths = lengths.tolist()
+    # if not isinstance(lengths, list):
+    #     lengths = lengths.tolist()
     bs = int(len(lengths))
     if maxlen is None:
         if xs is None:
@@ -164,7 +167,7 @@ def make_pad_mask(lengths, xs=None, length_dim=-1, maxlen=None):
 
     seq_range = torch.arange(0, maxlen, dtype=torch.int64)
     seq_range_expand = seq_range.unsqueeze(0).expand(bs, maxlen)
-    seq_length_expand = seq_range_expand.new(lengths).unsqueeze(-1)
+    seq_length_expand = lengths.unsqueeze(-1)
     mask = seq_range_expand >= seq_length_expand
 
     if xs is not None:
@@ -173,10 +176,10 @@ def make_pad_mask(lengths, xs=None, length_dim=-1, maxlen=None):
         if length_dim < 0:
             length_dim = xs.dim() + length_dim
         # ind = (:, None, ..., None, :, , None, ..., None)
-        ind = tuple(
-            slice(None) if i in (0, length_dim) else None for i in range(xs.dim())
-        )
-        mask = mask[ind].expand_as(xs).to(xs.device)
+        # ind = [
+        #     slice(None) if i == 0 or i == length_dim else None for i in range(xs.dim())
+        # ]
+        mask = mask.expand_as(xs).to(xs.device)
     return mask
 
 

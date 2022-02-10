@@ -9,8 +9,6 @@
 import six
 
 import torch
-from torch.nn.utils.rnn import pack_padded_sequence
-from torch.nn.utils.rnn import pad_packed_sequence
 import torch.distributions as D
 
 def encoder_init(m):

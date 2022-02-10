@@ -14,8 +14,7 @@ from torch.nn.utils.rnn import pack_padded_sequence
 from torch.nn.utils.rnn import pad_packed_sequence
 from espnet.nets.pytorch_backend.hqss.prenet import Prenet
 
-from espnet.nets.pytorch_backend.tacotron2.cbhg import CBHG
-from espnet.nets.pytorch_backend.tacotron2.cbhg import CBHGLoss
+from espnet.nets.pytorch_backend.hqss.cbhg import CBHG
 
 def encoder_init(m):
     """Initialize encoder parameters."""
@@ -78,7 +77,7 @@ class Encoder(torch.nn.Module):
         # initialize
         self.apply(encoder_init)
 
-    def forward(self, xs, ilens=None):
+    def forward(self, xs, ilens:torch.Tensor):
         """Calculate forward propagation.
 
         Args:
@@ -97,15 +96,12 @@ class Encoder(torch.nn.Module):
         
         xs_pre = self.prenet(xs_emb)
 
-        if not isinstance(ilens, torch.Tensor):
-            ilens = torch.tensor(ilens)
-
         cbhg_out = xs_pre
         
-        for i in six.moves.range(len(self.convs)):
-            cbhg_out, _ = self.convs[i](cbhg_out, ilens)
+        for conv in self.convs:
+            cbhg_out, _ = conv(cbhg_out, ilens)
         
-        xs_cbhg = pack_padded_sequence(cbhg_out, ilens.cpu(), batch_first=True, enforce_sorted=False)
+        xs_cbhg = pack_padded_sequence(cbhg_out, ilens, batch_first=True, enforce_sorted=False)
         xs_cbhg, hlens = pad_packed_sequence(xs_cbhg, batch_first=True)
 
         return xs_cbhg, hlens

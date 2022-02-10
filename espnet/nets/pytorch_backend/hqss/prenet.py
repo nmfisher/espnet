@@ -37,7 +37,7 @@ class Prenet(torch.nn.Module):
             Tensor: Batch of output tensors (B, ..., odim).
 
         """
-        for i in six.moves.range(len(self.prenet)):
-            x = F.dropout(self.prenet[i](x), self.dropout_rate)
+        for prenet_layer in self.prenet:
+            x = F.dropout(prenet_layer(x), self.dropout_rate)
         return x
 
