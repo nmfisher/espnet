@@ -47,14 +47,14 @@ local_data_opts="" # Options to be passed to local/data.sh.
 
 # Feature extraction related
 feats_type=raw             # Input feature type.
-audio_format=flac          # Audio format: wav, flac, wav.ark, flac.ark  (only in feats_type=raw).
+audio_format=wav          # Audio format: wav, flac, wav.ark, flac.ark  (only in feats_type=raw).
 min_wav_duration=0.1       # Minimum duration in second.
 max_wav_duration=20        # Maximum duration in second.
 use_xvector=false          # Whether to use x-vector (Require Kaldi).
 use_sid=false              # Whether to use speaker id as the inputs (Need utt2spk in data directory).
 use_lid=false              # Whether to use language id as the inputs (Need utt2lang in data directory).
 feats_extract=fbank        # On-the-fly feature extractor.
-feats_normalize=global_mvn # On-the-fly feature normalizer.
+feats_normalize=None # On-the-fly feature normalizer.
 fs=16000                   # Sampling rate.
 n_fft=1024                 # The number of fft points.
 n_shift=256                # The number of shift points.
@@ -219,6 +219,9 @@ fi
 # Check feature type
 if [ "${feats_type}" = raw ]; then
     data_feats="${dumpdir}/raw"
+elif [ "${feats_type}" = bfcc ]; then
+    data_feats="${dumpdir}/raw"
+    
 else
     log "${help_message}"
     log "Error: only supported: --feats_type raw"
@@ -545,37 +548,19 @@ if ! "${skip_train}"; then
             # "sound" supports "wav", "flac", etc.
             _type=sound
         fi
-        _opts+="--feats_extract ${feats_extract} "
-        _opts+="--feats_extract_conf n_fft=${n_fft} "
-        _opts+="--feats_extract_conf hop_length=${n_shift} "
-        _opts+="--feats_extract_conf win_length=${win_length} "
-        if [ "${feats_extract}" = fbank ]; then
-            _opts+="--feats_extract_conf fs=${fs} "
-            _opts+="--feats_extract_conf fmin=${fmin} "
-            _opts+="--feats_extract_conf fmax=${fmax} "
-            _opts+="--feats_extract_conf n_mels=${n_mels} "
-        fi
+        ./scripts/feats/make_bfcc.sh ${data_feats}/${train_set}
+        ./scripts/feats/make_bfcc.sh ${data_feats}/${valid_set}
 
-        # Add extra configs for additional inputs
-        # NOTE(kan-bayashi): We always pass this options but not used in default
-        _opts+="--pitch_extract_conf fs=${fs} "
-        _opts+="--pitch_extract_conf n_fft=${n_fft} "
-        _opts+="--pitch_extract_conf hop_length=${n_shift} "
-        _opts+="--pitch_extract_conf f0max=${f0max} "
-        _opts+="--pitch_extract_conf f0min=${f0min} "
-        _opts+="--energy_extract_conf fs=${fs} "
-        _opts+="--energy_extract_conf n_fft=${n_fft} "
-        _opts+="--energy_extract_conf hop_length=${n_shift} "
-        _opts+="--energy_extract_conf win_length=${win_length} "
 
         if [ -n "${teacher_dumpdir}" ]; then
             _teacher_train_dir="${teacher_dumpdir}/${train_set}"
             _teacher_valid_dir="${teacher_dumpdir}/${valid_set}"
+
             _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/clusters_d,durations,text_int "
             _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/clusters_d,durations,text_int "
             _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/pitch,pitch,text_int "
             _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/pitch,pitch,text_int "
-            #_opts+="--allow_variable_data_keys true"
+
             ./scripts/feats/cluster_durations.sh \
               ${_teacher_train_dir}/durations \
                ${data_feats}/${train_set}/text \
@@ -643,6 +628,8 @@ if ! "${skip_train}"; then
         # 3. Submit jobs
         log "TTS collect_stats started... log: '${_logdir}/stats.*.log'"
 
+        log "LAUNCHING"
+
         # shellcheck disable=SC2086
         ${train_cmd} JOB=1:"${_nj}" "${_logdir}"/stats.JOB.log \
             ${python} -m "espnet2.bin.${tts_task}_train" \
@@ -664,6 +651,7 @@ if ! "${skip_train}"; then
                 --train_shape_file "${_logdir}/train.JOB.scp" \
                 --valid_shape_file "${_logdir}/valid.JOB.scp" \
                 --output_dir "${_logdir}/stats.JOB" \
+                --allow_variable_data_keys true \
                 ${_opts} ${train_args} || { cat "${_logdir}"/stats.1.log; exit 1; }
 
         # 4. Aggregate shape files
@@ -765,21 +753,25 @@ if ! "${skip_train}"; then
             _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/text,text,text "
             _opts+="--valid_shape_file ${tts_stats_dir}/valid/text_shape.${token_type} "
 
+            _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/feats.scp,speech,kaldi_ark "
+            _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/feats.scp,speech,kaldi_ark "
+
+
             _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/clusters_d,durations,text_int "
             _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/clusters_d,durations,text_int "
             _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/pitch,pitch,text_int "
             _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/pitch,pitch,text_int "
+            _opts+="--odim 20 "
 
             if [ -e ${_teacher_train_dir}/probs ]; then
                 # Knowledge distillation case: use the outputs of the teacher model as the target
                 _scp=feats.scp
                 _type=npy
-                _odim="$(head -n 1 "${_teacher_train_dir}/speech_shape" | cut -f 2 -d ",")"
-                _opts+="--odim=${_odim} "
-                _opts+="--train_data_path_and_name_and_type ${_teacher_train_dir}/denorm/${_scp},speech,${_type} "
-                _opts+="--train_shape_file ${_teacher_train_dir}/speech_shape "
-                _opts+="--valid_data_path_and_name_and_type ${_teacher_valid_dir}/denorm/${_scp},speech,${_type} "
-                _opts+="--valid_shape_file ${_teacher_valid_dir}/speech_shape "
+
+                #_opts+="--train_data_path_and_name_and_type ${_teacher_train_dir}/denorm/${_scp},speech,${_type} "
+                #_opts+="--train_shape_file ${_teacher_train_dir}/speech_shape "
+                #_opts+="--valid_data_path_and_name_and_type ${_teacher_valid_dir}/denorm/${_scp},speech,${_type} "
+                #_opts+="--valid_shape_file ${_teacher_valid_dir}/speech_shape "
             else
                 # Teacher forcing case: use groundtruth as the target
                 _scp=wav.scp
@@ -795,10 +787,10 @@ if ! "${skip_train}"; then
                     _opts+="--feats_extract_conf fmax=${fmax} "
                     _opts+="--feats_extract_conf n_mels=${n_mels} "
                 fi
-                _opts+="--train_data_path_and_name_and_type ${_train_dir}/${_scp},speech,${_type} "
-                _opts+="--train_shape_file ${tts_stats_dir}/train/speech_shape "
-                _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/${_scp},speech,${_type} "
-                _opts+="--valid_shape_file ${tts_stats_dir}/valid/speech_shape "
+                #_opts+="--train_data_path_and_name_and_type ${_train_dir}/${_scp},speech,${_type} "
+                #_opts+="--train_shape_file ${tts_stats_dir}/train/speech_shape "
+                #_opts+="--valid_data_path_and_name_and_type ${_valid_dir}/${_scp},speech,${_type} "
+                #_opts+="--valid_shape_file ${tts_stats_dir}/valid/speech_shape "
             fi
         fi
 
@@ -876,6 +868,7 @@ if ! "${skip_train}"; then
         fi
 
         echo "$_opts" > /tmp/opts
+        
         # shellcheck disable=SC2086
         ${python} -m espnet2.bin.launch \
             --cmd "${cuda_cmd} --name ${jobname}" \
@@ -896,6 +889,7 @@ if ! "${skip_train}"; then
                 --fold_length "${text_fold_length}" \
                 --fold_length "${_fold_length}" \
                 --output_dir "${tts_exp}" \
+                --allow_variable_data_keys true \
                 ${_opts} ${train_args}
 
     fi
