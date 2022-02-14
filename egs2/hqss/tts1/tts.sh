@@ -46,25 +46,24 @@ python=python3       # Specify python to execute espnet commands.
 local_data_opts="" # Options to be passed to local/data.sh.
 
 # Feature extraction related
-feats_type=raw             # Input feature type.
+feats_type=bfcc             # Input feature type.
 audio_format=wav          # Audio format: wav, flac, wav.ark, flac.ark  (only in feats_type=raw).
 min_wav_duration=0.1       # Minimum duration in second.
 max_wav_duration=20        # Maximum duration in second.
 use_xvector=false          # Whether to use x-vector (Require Kaldi).
 use_sid=false              # Whether to use speaker id as the inputs (Need utt2spk in data directory).
 use_lid=false              # Whether to use language id as the inputs (Need utt2lang in data directory).
-feats_extract=fbank        # On-the-fly feature extractor.
+feats_extract=None        # On-the-fly feature extractor.
 feats_normalize=None # On-the-fly feature normalizer.
 fs=16000                   # Sampling rate.
-n_fft=1024                 # The number of fft points.
-n_shift=256                # The number of shift points.
-win_length=null            # Window length.
 fmin=80                    # Minimum frequency of Mel basis.
 fmax=7600                  # Maximum frequency of Mel basis.
 n_mels=80                  # The number of mel basis.
 # Only used for the model using pitch & energy features (e.g. FastSpeech2)
 f0min=80  # Maximum f0 for pitch extraction.
 f0max=400 # Minimum f0 for pitch extraction.
+
+odim=20
 
 # Vocabulary related
 oov="<unk>"         # Out of vocabrary symbol.
@@ -107,8 +106,6 @@ token_type=phn   # Transcription type (char or phn).
 cleaner=tacotron # Text cleaner.
 g2p=g2p_en       # g2p method (needed if token_type=phn).
 lang=noinfo      # The language type of corpus.
-text_fold_length=150   # fold_length for text data.
-speech_fold_length=800 # fold_length for speech data.
 
 # Upload model related
 hf_repo=
@@ -149,10 +146,6 @@ Options:
     --fs               # Sampling rate (default="${fs}").
     --fmax             # Maximum frequency of Mel basis (default="${fmax}").
     --fmin             # Minimum frequency of Mel basis (default="${fmin}").
-    --n_mels           # The number of mel basis (default="${n_mels}").
-    --n_fft            # The number of fft points (default="${n_fft}").
-    --n_shift          # The number of shift points (default="${n_shift}").
-    --win_length       # Window length (default="${win_length}").
     --f0min            # Maximum f0 for pitch extraction (default="${f0min}").
     --f0max            # Minimum f0 for pitch extraction (default="${f0max}").
     --oov              # Out of vocabrary symbol (default="${oov}").
@@ -197,8 +190,6 @@ Options:
     --cleaner            # Text cleaner (default="${cleaner}").
     --g2p                # g2p method (default="${g2p}").
     --lang               # The language type of corpus (default="${lang}").
-    --text_fold_length   # Fold length for text data (default="${text_fold_length}").
-    --speech_fold_length # Fold length for speech data (default="${speech_fold_length}").
 EOF
 )
 
@@ -228,23 +219,11 @@ else
     exit 2
 fi
 
-# Check token list type
-token_listdir="${dumpdir}/token_list/${token_type}"
-if [ "${cleaner}" != none ]; then
-    token_listdir+="_${cleaner}"
-fi
-if [ "${token_type}" = phn ]; then
-    token_listdir+="_${g2p}"
-fi
-token_list="${token_listdir}/tokens.txt"
+# no need to recreate token_list as this will always be a list of IPA phones
+mkdir -p "${dumpdir}/token_list"
+token_list="${dumpdir}/token_list/tokens.txt"
+cp "tokens.txt" $token_list
 
-# Check old version token list dir existence
-if [ -e data/token_list ] && [ ! -e "${dumpdir}/token_list" ]; then
-    log "Default token_list directory path is changed from data to ${dumpdir}."
-    log "Copy data/token_list to ${dumpdir}/token_list for the compatibility."
-    [ ! -e ${dumpdir} ] && mkdir -p ${dumpdir}
-    cp -a "data/token_list" "${dumpdir}/token_list"
-fi
 
 # Set tag for naming of model directory
 if [ -z "${tag}" ]; then
@@ -460,9 +439,9 @@ if ! "${skip_data_prep}"; then
             fi
 
             # Remove short utterances
-            _fs=$(python3 -c "import humanfriendly as h;print(h.parse_size('${fs}'))")
-            _min_length=$(python3 -c "print(int(${min_wav_duration} * ${_fs}))")
-            _max_length=$(python3 -c "print(int(${max_wav_duration} * ${_fs}))")
+            _fs=$($python -c "import humanfriendly as h;print(h.parse_size('${fs}'))")
+            _min_length=$($python -c "print(int(${min_wav_duration} * ${_fs}))")
+            _max_length=$($python -c "print(int(${max_wav_duration} * ${_fs}))")
 
             # utt2num_samples is created by format_wav_scp.sh
             <"${data_feats}/org/${dset}/utt2num_samples" \
@@ -486,6 +465,7 @@ if ! "${skip_data_prep}"; then
                 _fix_opts="--utt_extra_files utt2lid "
             fi
             # shellcheck disable=SC2086
+
             utils/fix_data_dir.sh ${_fix_opts} "${data_feats}/${dset}"
 
             # Filter x-vector
@@ -551,7 +531,6 @@ if ! "${skip_train}"; then
         ./scripts/feats/make_bfcc.sh ${data_feats}/${train_set}
         ./scripts/feats/make_bfcc.sh ${data_feats}/${valid_set}
 
-
         if [ -n "${teacher_dumpdir}" ]; then
             _teacher_train_dir="${teacher_dumpdir}/${train_set}"
             _teacher_valid_dir="${teacher_dumpdir}/${valid_set}"
@@ -561,24 +540,33 @@ if ! "${skip_train}"; then
             _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/pitch,pitch,text_int "
             _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/pitch,pitch,text_int "
 
+            cp ${_teacher_train_dir}/durations "${data_feats}/${train_set}/durations" 
+            cp ${_teacher_valid_dir}/durations "${data_feats}/${valid_set}/durations"
+
+            ./utils/fix_data_dir.sh "${data_feats}/${train_set}"
+            ./utils/fix_data_dir.sh "${data_feats}/${valid_set}"
+
+            num_prosody_clusters=$(grep "num_prosody_clusters" ${train_config} | sed "s/[^0-9+]//g");
+            
             ./scripts/feats/cluster_durations.sh \
-              ${_teacher_train_dir}/durations \
+              "${data_feats}/${train_set}/durations" \
                ${data_feats}/${train_set}/text \
                ${data_feats}/${train_set}/clusters_d \
-               ${_teacher_valid_dir}/durations \
-                ${data_feats}/${valid_set}/text \
-               ${data_feats}/${valid_set}/clusters_d
+               "${data_feats}/${valid_set}/durations" \
+               ${data_feats}/${valid_set}/text \
+               ${data_feats}/${valid_set}/clusters_d \
+               ${num_prosody_clusters}
 
             ./scripts/feats/cluster_f0.sh \
                ${data_feats}/${train_set}/wav.scp \
-               ${_teacher_train_dir}/durations \
+               ${data_feats}/${train_set}/durations \
                ${data_feats}/${train_set}/text \
                ${data_feats}/${train_set}/pitch \
                ${data_feats}/${valid_set}/wav.scp \
-               ${_teacher_valid_dir}/durations \
+               ${data_feats}/${valid_set}/durations \
                ${data_feats}/${valid_set}/text \
                ${data_feats}/${valid_set}/pitch \
-               ${f0min} ${f0max}
+               ${f0min} ${f0max} ${num_prosody_clusters}
         fi
 
         if "${use_xvector}"; then
@@ -591,6 +579,7 @@ if ! "${skip_train}"; then
         if "${use_sid}"; then
             _opts+="--train_data_path_and_name_and_type ${_train_dir}/utt2sid,sids,text_int "
             _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/utt2sid,sids,text_int "
+            _opts+="--num_speakers $(cat "${data_feats}/org/${train_set}/spk2sid" | wc -l)"
         fi
 
         if "${use_lid}"; then
@@ -628,7 +617,7 @@ if ! "${skip_train}"; then
         # 3. Submit jobs
         log "TTS collect_stats started... log: '${_logdir}/stats.*.log'"
 
-        log "LAUNCHING"
+        log "LAUNCHING with _opts $_opts"
 
         # shellcheck disable=SC2086
         ${train_cmd} JOB=1:"${_nj}" "${_logdir}"/stats.JOB.log \
@@ -638,7 +627,7 @@ if ! "${skip_train}"; then
                 --use_preprocessor true \
                 --token_type "${token_type}" \
                 --token_list "${token_list}" \
-                --non_linguistic_symbols "${nlsyms_txt}" \
+                 --non_linguistic_symbols "${nlsyms_txt}" \
                 --cleaner "${cleaner}" \
                 --g2p "${g2p}" \
                 --normalize none \
@@ -652,6 +641,7 @@ if ! "${skip_train}"; then
                 --valid_shape_file "${_logdir}/valid.JOB.scp" \
                 --output_dir "${_logdir}/stats.JOB" \
                 --allow_variable_data_keys true \
+                --odim "$odim " \
                 ${_opts} ${train_args} || { cat "${_logdir}"/stats.1.log; exit 1; }
 
         # 4. Aggregate shape files
@@ -675,7 +665,7 @@ if ! "${skip_train}"; then
     if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
         _train_dir="${data_feats}/${train_set}"
         _valid_dir="${data_feats}/${valid_set}"
-        log "Stage 6: TTS Training: train_set=${_train_dir}, valid_set=${_valid_dir}"
+        log "Stage 6: TTS Training: train_set=${_train_dir}, valid_set=${_valid_dir}, config=${train_config}"
 
         _opts=
         if [ -n "${train_config}" ]; then
@@ -684,164 +674,41 @@ if ! "${skip_train}"; then
             _opts+="--config ${train_config} "
         fi
 
-        if [ -z "${teacher_dumpdir}" ]; then
-            #####################################
-            #     CASE 1: AR model training     #
-            #####################################
-            _scp=wav.scp
-            # "sound" supports "wav", "flac", etc.
-            _type=sound
-            _fold_length="$((speech_fold_length * n_shift))"
-            _opts+="--feats_extract ${feats_extract} "
-            _opts+="--feats_extract_conf n_fft=${n_fft} "
-            _opts+="--feats_extract_conf hop_length=${n_shift} "
-            _opts+="--feats_extract_conf win_length=${win_length} "
-            
-            if [ "${feats_extract}" = fbank ]; then
-                _opts+="--feats_extract_conf fs=${fs} "
-                _opts+="--feats_extract_conf fmin=${fmin} "
-                _opts+="--feats_extract_conf fmax=${fmax} "
-                _opts+="--feats_extract_conf n_mels=${n_mels} "
-            fi
 
-            if [ "${num_splits}" -gt 1 ]; then
-                # If you met a memory error when parsing text files, this option may help you.
-                # The corpus is split into subsets and each subset is used for training one by one in order,
-                # so the memory footprint can be limited to the memory required for each dataset.
+        _teacher_train_dir="${teacher_dumpdir}/${train_set}"
+        _teacher_valid_dir="${teacher_dumpdir}/${valid_set}"
+        
+        _opts+="--train_data_path_and_name_and_type ${_train_dir}/text,text,text "
+        _opts+="--train_shape_file ${tts_stats_dir}/train/text_shape.${token_type} "
+        _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/text,text,text "
+        _opts+="--valid_shape_file ${tts_stats_dir}/valid/text_shape.${token_type} "
 
-                _split_dir="${tts_stats_dir}/splits${num_splits}"
-                if [ ! -f "${_split_dir}/.done" ]; then
-                    rm -f "${_split_dir}/.done"
-                    ${python} -m espnet2.bin.split_scps \
-                      --scps \
-                          "${_train_dir}/text" \
-                          "${_train_dir}/${_scp}" \
-                          "${tts_stats_dir}/train/speech_shape" \
-                          "${tts_stats_dir}/train/text_shape.${token_type}" \
-                      --num_splits "${num_splits}" \
-                      --output_dir "${_split_dir}"
-                    touch "${_split_dir}/.done"
-                else
-                    log "${_split_dir}/.done exists. Spliting is skipped"
-                fi
+        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/feats.scp,speech,kaldi_ark "
+        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/feats.scp,speech,kaldi_ark "
 
-                _opts+="--train_data_path_and_name_and_type ${_split_dir}/text,text,text "
-                _opts+="--train_data_path_and_name_and_type ${_split_dir}/${_scp},speech,${_type} "
-                _opts+="--train_shape_file ${_split_dir}/text_shape.${token_type} "
-                _opts+="--train_shape_file ${_split_dir}/speech_shape "
-                _opts+="--multiple_iterator true "
 
-            else
-                _opts+="--train_data_path_and_name_and_type ${_train_dir}/text,text,text "
-                _opts+="--train_data_path_and_name_and_type ${_train_dir}/${_scp},speech,${_type} "
-                _opts+="--train_shape_file ${tts_stats_dir}/train/text_shape.${token_type} "
-                _opts+="--train_shape_file ${tts_stats_dir}/train/speech_shape "
-            fi
-            _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/text,text,text "
-            _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/${_scp},speech,${_type} "
-            _opts+="--valid_shape_file ${tts_stats_dir}/valid/text_shape.${token_type} "
-            _opts+="--valid_shape_file ${tts_stats_dir}/valid/speech_shape "
+        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/clusters_d,durations,text_int "
+        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/clusters_d,durations,text_int "
+        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/pitch,pitch,text_int "
+        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/pitch,pitch,text_int "
+        _opts+="--odim ${odim} "
+
+        if [ -e ${_teacher_train_dir}/probs ]; then
+            # Knowledge distillation case: use the outputs of the teacher model as the target
+            _scp=feats.scp
+            _type=npy
         else
-            #####################################
-            #   CASE 2: Non-AR model training   #
-            #####################################
-            _teacher_train_dir="${teacher_dumpdir}/${train_set}"
-            _teacher_valid_dir="${teacher_dumpdir}/${valid_set}"
-            _fold_length="${speech_fold_length}"
-            _opts+="--train_data_path_and_name_and_type ${_train_dir}/text,text,text "
-            _opts+="--train_shape_file ${tts_stats_dir}/train/text_shape.${token_type} "
-            _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/text,text,text "
-            _opts+="--valid_shape_file ${tts_stats_dir}/valid/text_shape.${token_type} "
-
-            _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/feats.scp,speech,kaldi_ark "
-            _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/feats.scp,speech,kaldi_ark "
-
-
-            _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/clusters_d,durations,text_int "
-            _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/clusters_d,durations,text_int "
-            _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/pitch,pitch,text_int "
-            _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/pitch,pitch,text_int "
-            _opts+="--odim 20 "
-
-            if [ -e ${_teacher_train_dir}/probs ]; then
-                # Knowledge distillation case: use the outputs of the teacher model as the target
-                _scp=feats.scp
-                _type=npy
-
-                #_opts+="--train_data_path_and_name_and_type ${_teacher_train_dir}/denorm/${_scp},speech,${_type} "
-                #_opts+="--train_shape_file ${_teacher_train_dir}/speech_shape "
-                #_opts+="--valid_data_path_and_name_and_type ${_teacher_valid_dir}/denorm/${_scp},speech,${_type} "
-                #_opts+="--valid_shape_file ${_teacher_valid_dir}/speech_shape "
-            else
-                # Teacher forcing case: use groundtruth as the target
-                _scp=wav.scp
-                _type=sound
-                _fold_length="$((speech_fold_length * n_shift))"
-                _opts+="--feats_extract ${feats_extract} "
-                _opts+="--feats_extract_conf n_fft=${n_fft} "
-                _opts+="--feats_extract_conf hop_length=${n_shift} "
-                _opts+="--feats_extract_conf win_length=${win_length} "
-                if [ "${feats_extract}" = fbank ]; then
-                    _opts+="--feats_extract_conf fs=${fs} "
-                    _opts+="--feats_extract_conf fmin=${fmin} "
-                    _opts+="--feats_extract_conf fmax=${fmax} "
-                    _opts+="--feats_extract_conf n_mels=${n_mels} "
-                fi
-                #_opts+="--train_data_path_and_name_and_type ${_train_dir}/${_scp},speech,${_type} "
-                #_opts+="--train_shape_file ${tts_stats_dir}/train/speech_shape "
-                #_opts+="--valid_data_path_and_name_and_type ${_valid_dir}/${_scp},speech,${_type} "
-                #_opts+="--valid_shape_file ${tts_stats_dir}/valid/speech_shape "
-            fi
+            # Teacher forcing case: use groundtruth as the target
+            _scp=wav.scp
+            _type=sound
         fi
 
-        # If there are dumped files of additional inputs, we use it to reduce computational cost
-        # NOTE (kan-bayashi): Use dumped files of the target features as well?
-        if [ -e "${tts_stats_dir}/train/collect_feats/pitch.scp" ]; then
-            _scp=pitch.scp
-            _type=npy
-            _train_collect_dir=${tts_stats_dir}/train/collect_feats
-            _valid_collect_dir=${tts_stats_dir}/valid/collect_feats
-            _opts+="--train_data_path_and_name_and_type ${_train_collect_dir}/${_scp},pitch,${_type} "
-            _opts+="--valid_data_path_and_name_and_type ${_valid_collect_dir}/${_scp},pitch,${_type} "
-        fi
-        if [ -e "${tts_stats_dir}/train/collect_feats/energy.scp" ]; then
-            _scp=energy.scp
-            _type=npy
-            _train_collect_dir=${tts_stats_dir}/train/collect_feats
-            _valid_collect_dir=${tts_stats_dir}/valid/collect_feats
-            _opts+="--train_data_path_and_name_and_type ${_train_collect_dir}/${_scp},energy,${_type} "
-            _opts+="--valid_data_path_and_name_and_type ${_valid_collect_dir}/${_scp},energy,${_type} "
-        fi
-
-        # Check extra statistics
-        if [ -e "${tts_stats_dir}/train/pitch_stats.npz" ]; then
-            _opts+="--pitch_extract_conf fs=${fs} "
-            _opts+="--pitch_extract_conf n_fft=${n_fft} "
-            _opts+="--pitch_extract_conf hop_length=${n_shift} "
-            _opts+="--pitch_extract_conf f0max=${f0max} "
-            _opts+="--pitch_extract_conf f0min=${f0min} "
-            _opts+="--pitch_normalize_conf stats_file=${tts_stats_dir}/train/pitch_stats.npz "
-        fi
-        if [ -e "${tts_stats_dir}/train/energy_stats.npz" ]; then
-            _opts+="--energy_extract_conf fs=${fs} "
-            _opts+="--energy_extract_conf n_fft=${n_fft} "
-            _opts+="--energy_extract_conf hop_length=${n_shift} "
-            _opts+="--energy_extract_conf win_length=${win_length} "
-            _opts+="--energy_normalize_conf stats_file=${tts_stats_dir}/train/energy_stats.npz "
-        fi
-
-        # Add X-vector to the inputs if needed
-        if "${use_xvector}"; then
-            _xvector_train_dir="${dumpdir}/xvector/${train_set}"
-            _xvector_valid_dir="${dumpdir}/xvector/${valid_set}"
-            _opts+="--train_data_path_and_name_and_type ${_xvector_train_dir}/xvector.scp,spembs,kaldi_ark "
-            _opts+="--valid_data_path_and_name_and_type ${_xvector_valid_dir}/xvector.scp,spembs,kaldi_ark "
-        fi
 
         # Add spekaer ID to the inputs if needed
         if "${use_sid}"; then
             _opts+="--train_data_path_and_name_and_type ${_train_dir}/utt2sid,sids,text_int "
             _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/utt2sid,sids,text_int "
+            _opts+="--num_speakers $(cat "${data_feats}/org/${train_set}/spk2sid" | wc -l)"
         fi
 
         # Add language ID to the inputs if needed
@@ -856,8 +723,6 @@ if ! "${skip_train}"; then
 
         log "Generate '${tts_exp}/run.sh'. You can resume the process from stage 6 using this script"
         mkdir -p "${tts_exp}"; echo "${run_args} --stage 6 \"\$@\"; exit \$?" > "${tts_exp}/run.sh"; chmod +x "${tts_exp}/run.sh"
-
-        # NOTE(kamo): --fold_length is used only if --batch_type=folded and it's ignored in the other case
 
         log "TTS training started... log: '${tts_exp}/train.log'"
         if echo "${cuda_cmd}" | grep -e queue.pl -e queue-freegpu.pl &> /dev/null; then
@@ -886,8 +751,6 @@ if ! "${skip_train}"; then
                 --g2p "${g2p}" \
                 --normalize "${feats_normalize}" \
                 --resume true \
-                --fold_length "${text_fold_length}" \
-                --fold_length "${_fold_length}" \
                 --output_dir "${tts_exp}" \
                 --allow_variable_data_keys true \
                 ${_opts} ${train_args}
@@ -958,10 +821,6 @@ if ! "${skip_eval}"; then
             if [ -n "${teacher_dumpdir}" ]; then
                 # Use groundtruth of durations
                 _teacher_dir="${teacher_dumpdir}/${dset}"
-#                _ex_opts+="--data_path_and_name_and_type ${_teacher_dir}/durations,durations,text_int "
-                 # _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/clusters_d,durations,text_int "
-                    
-                   #_opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/pitch,pitch,text_int "
                 _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/clusters_d,durations,text_int "
                 _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/pitch,pitch,text_int "
                 # Overwrite speech arguments if use knowledge distillation

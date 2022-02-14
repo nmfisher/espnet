@@ -80,4 +80,5 @@ class Postnet(torch.nn.Module):
         """
         for layer in self.postnet:
             xs = layer(xs)
+        
         return xs

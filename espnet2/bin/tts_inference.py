@@ -174,8 +174,8 @@ class Text2Speech:
             raise RuntimeError("Missing required argument: 'sids'")
         if self.use_lids and lids is None:
             raise RuntimeError("Missing required argument: 'lids'")
-        if self.use_spembs and spembs is None:
-            raise RuntimeError("Missing required argument: 'spembs'")
+        # if self.use_spembs and spembs is None:
+        #     raise RuntimeError("Missing required argument: 'spembs'")
 
         # prepare batch
         if isinstance(text, str):
@@ -358,7 +358,7 @@ def inference(
         device = "cuda"
     else:
         device = "cpu"
-
+    
     # 1. Set random-seed
     set_all_random_seed(seed)
 
