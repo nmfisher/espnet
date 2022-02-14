@@ -151,6 +151,8 @@ function filter_utts {
       echo "utt2uniq is not in sorted order (fix this yourself)" && exit 1;
   fi
 
+  [ -f $data/durations ] && echo "durations!" && filter_file $tmpdir/utts $data/durations
+  
   maybe_wav=
   maybe_reco2dur=
   [ ! -f $data/segments ] && maybe_wav=wav.scp # wav indexed by utts only if segments does not exist.

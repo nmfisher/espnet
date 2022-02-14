@@ -15,7 +15,7 @@ import torch.nn.functional as F
 from espnet.nets.pytorch_backend.hqss.zoneout import ZoneOutCell
 from espnet.nets.pytorch_backend.hqss.prenet import Prenet
 from espnet.nets.pytorch_backend.hqss.postnet import Postnet
-
+from typing import Optional
 
 def decoder_init(m):
     """Initialize decoder parameters."""
@@ -100,10 +100,10 @@ class Decoder(torch.nn.Module):
         self.apply(decoder_init)
 
     def _zero_state(self, hs):
-        init_hs = hs.new_zeros(hs.size(0), self.lstm[0].hidden_size)
-        return init_hs
+        # return hs.new_zeros(hs.size(0), self.lstm[0].hidden_size)
+        return torch.zeros(hs.size(0), self.lstm[0].hidden_size)
 
-    def forward(self, enc_z, enc_p, ilens, ys, spk_embeds):
+    def forward(self, enc_z, ilens, enc_p, plens,  ys, spk_embeds):
         """Calculate forward propagation.
 
         Args:
@@ -134,10 +134,10 @@ class Decoder(torch.nn.Module):
         prev_out = enc_z.new_zeros(enc_z.size(0), self.odim).to(enc_z.device)
 
         # initialize attention
-        prev_att_w = torch.zeros(0)
-        prev_att_w2 = torch.zeros(0)
-        self.att.reset()
-        self.att_p.reset()
+        prev_att_w : Optional [ torch.Tensor ] = None
+        prev_att_w2 : Optional [ torch.Tensor ] = None
+        self.att.reset(enc_z, ilens)
+        self.att_p.reset(enc_p, plens)
 
         outs = []
         logits = []
@@ -147,7 +147,7 @@ class Decoder(torch.nn.Module):
 
             att_c, att_w = self.att(enc_z, ilens, z_list[0], prev_att_w)
 
-            att_c2, att_w2 = self.att(enc_p, ilens, z_list[0], prev_att_w2)
+            att_c2, att_w2 = self.att_p(enc_p, plens, z_list[0], prev_att_w2)
 
             prenet_out = self.prenet(prev_out)
             
@@ -194,11 +194,13 @@ class Decoder(torch.nn.Module):
     def inference(
         self,
         enc_z,
+        ilens,
         enc_p,
+        plens,
         spk_embeds,
-        threshold : float =0.5,
+        threshold : float = 0.5,
         minlen: int =10,
-        maxlenratio: float =500.0,
+        maxlenratio: float = 50.0,
         use_att_constraint: bool =False,
         backward_window: int =-1,
         forward_window:int=-1
@@ -226,144 +228,108 @@ class Decoder(torch.nn.Module):
 
         """
         # setup
-        assert len(enc_z.size()) == 2 # seq_length x hdim
-
-        ilens = torch.tensor([enc_z.size(0)])
-        plens = torch.tensor([enc_p.size(0)])
-        enc_z = enc_z.unsqueeze(0)
-        enc_p = enc_p.unsqueeze(0)
+        assert len(enc_z.size()) == 3 # batch x seq_length x hdim
+        assert len(spk_embeds.size()) == 2
         
-        if len(spk_embeds.size()) > 2:
-          spk_embeds = spk_embeds.squeeze(0)
-        
-        c_list = [self._zero_state(enc_z).to(enc_z.device)]
-        z_list = [self._zero_state(enc_z).to(enc_z.device)]
-        for _ in self.lstm[1:]:
-            c_list += [self._zero_state(enc_z).to(enc_z.device)]
-            z_list += [self._zero_state(enc_z).to(enc_z.device)]
-
+        # c_list = [self._zero_state(enc_z) for _ in self.lstm]
+        # z_list = [self._zero_state(enc_z) for _ in self.lstm]
+        c_list = torch.zeros(enc_z.size(0), self.lstm[0].hidden_size, len(self.lstm))
+        z_list = torch.zeros(enc_z.size(0), self.lstm[0].hidden_size, len(self.lstm))
 
         prev_out = enc_z.new_zeros(1, self.odim).to(enc_z.device)
 
         # initialize attention
         prev_att_w = None
         prev_att_w2 = None
-        self.att.reset()
+        self.att.reset(enc_z, ilens)
+        self.att_p.reset(enc_p, plens)
 
-        outs, att_ws, probs = [], [], []
+        outs : list[torch.Tensor] = []
+        att_ws = []
+        stop_prob = torch.zeros(0)
         
         i = 0
 
-        while True:
+        maxlen = enc_z.size(1) * maxlenratio
+
+        # print(f"Using minlen {minlen}, max len {maxlen}, stop threshold {threshold} ")
+
+        xs = torch.zeros(0)
+
+        stop_prob = 0
+
+        while stop_prob < 0.5 and i < maxlen:
+
+          prenet_out = self.prenet(prev_out)
+
           att_c, att_w = self.att(
               enc_z, 
               ilens, 
-              z_list[0], 
+              z_list[:,:,0], 
               prev_att_w, 
           )
 
           att_c2, att_w2 = self.att_p(
               enc_p, 
               plens, 
-              z_list[0], 
+              z_list[:,:,0], 
               prev_att_w2, 
           )
-
-          prenet_out = self.prenet(prev_out)
 
           xs = torch.cat([
             att_c, 
             att_c2, 
             prenet_out,
             spk_embeds
-          ], dim=1).to(enc_z.device)
-
+          ], dim=1)
           for j, layer in enumerate(self.lstm):
             if j == 0:
-              z_list[0], c_list[0] = layer(xs, (z_list[0], c_list[0]))
+              z_, c_ = layer(xs, (z_list[:,:,0], c_list[:,:,0]))
             else:
-              z_list[j], c_list[j] = layer(
-                  z_list[j - 1], (z_list[j], c_list[j])
+              z_, c_ = layer(
+                  z_list[:,:,j-1], (z_list[:,:,j], c_list[:,:,j])
             )
+            z_list[:,:,j] = z_
+            c_list[:,:,j] = c_
+
+
+          # for j, layer in enumerate(self.lstm):
+          #   if j == 0:
+          #     z_list[0], c_list[0] = layer(xs, (z_list[0], c_list[0]))
+          #   else:
+          #     z_list[j], c_list[j] = layer(
+          #         z_list[j - 1], (z_list[j], c_list[j])
+          #   )
+          
           zcs = torch.cat([
-            z_list[-1], 
+            z_list[:,:,-1], 
             att_c, 
             att_c2
           ], dim=1) 
 
+          out = self.feat_out(zcs)
 
+          out = out.reshape(enc_z.size(0), self.odim, 1)
 
-          outs += [self.feat_out(zcs).view(enc_z.size(0), self.odim, -1)]
+          outs += [ out ]
 
-          probs += [torch.sigmoid(self.prob_out(zcs))[0]]
-          if isinstance(att_w, tuple):
-            att_ws += [att_w[0]]
-          else:
-            att_ws += [att_w]
+          stop_prob = torch.sigmoid(self.prob_out(zcs))[0].item()
+          # if isinstance(att_w, tuple):
+          #   att_ws = att_ws + [att_w[0]]
+          # else:
+          #   att_ws = att_ws + [att_w]
 
-          prev_out = outs[-1][:, :, -1]
-          
-          i += 1
-          if i >= 5:
-            # check mininum length
-            if i < minlen:
-                continue
-            if int(probs[-1]) > 0:
-                print("Stopped due to stop prob")
-            else:
-                print("Stopped due to max len")
-            break        
+          prev_out = out.squeeze(2)
+            
+          i = i + 1
+      
         outs_tensor = torch.cat(outs, dim=2)
-        outs_tensor = outs_tensor + self.postnet(outs_tensor)
-        return outs_tensor.transpose(1,2), torch.cat(probs, 0), torch.cat(att_ws, 0)
+        
+        postnet_outs = self.postnet(outs_tensor)
+        postnet_outs = postnet_outs
+        outs_tensor = outs_tensor + postnet_outs
 
-    def calculate_all_attentions(self, enc_z, hlens, ys):
-        """Calculate all of the attention weights.
+        return outs_tensor, None, None#torch.cat(att_ws, 0)
 
-        Args:
-            enc_z (Tensor): Batch of the sequences of padded hidden states (B, Tmax, enc_odim).
-            hlens (LongTensor): Batch of lengths of each input batch (B,).
-            ys (Tensor):
-                Batch of the sequences of padded target features (B, Lmax, odim).
 
-        Returns:
-            numpy.ndarray: Batch of attention weights (B, Lmax, Tmax).
-
-        Note:
-            This computation is performed in teacher-forcing manner.
-
-        """
-        # thin out frames (B, Lmax, odim) ->  (B, Lmax/r, odim)
-        if self.reduction_factor > 1:
-            ys = ys[:, self.reduction_factor - 1 :: self.reduction_factor]
-
-        # initialize hidden states of decoder
-        c_list = [self._zero_state(enc_z)]
-        z_list = [self._zero_state(enc_z)]
-        for _ in six.moves.range(1, len(self.lstm)):
-            c_list += [self._zero_state(enc_z)]
-            z_list += [self._zero_state(enc_z)]
-        prev_out = enc_z.new_zeros(enc_z.size(0), self.odim)
-
-        # initialize attention
-        prev_att_w = None
-        self.att.reset()
-
-        # loop for an output sequence
-        att_ws = []
-        for y in ys.transpose(0, 1):
-            att_c, att_w = self.att(enc_z, hlens, z_list[0], prev_att_w)
-            att_ws += [att_w]
-            prenet_out = self.prenet(prev_out) if self.prenet is not None else prev_out
-            enc_z = torch.cat([att_c, prenet_out], dim=1)
-            z_list[0], c_list[0] = self.lstm[0](enc_z, (z_list[0], c_list[0]))
-            for i in six.moves.range(1, len(self.lstm)):
-                z_list[i], c_list[i] = self.lstm[i](
-                    z_list[i - 1], (z_list[i], c_list[i])
-                )
-            prev_out = y  # teacher forcing
-            prev_att_w = att_ws[0] if type(att_ws) is tuple else att_ws
-
-        att_ws = torch.stack(att_ws, dim=1)  # (B, Lmax, Tmax)
-
-        return att_ws
+    

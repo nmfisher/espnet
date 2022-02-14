@@ -100,24 +100,6 @@ class ESPnetTTSModel(AbsESPnetModel):
                 # Use precalculated feats (feats_type != raw case)
                 feats, feats_lengths = speech, speech_lengths
 
-            # Extract auxiliary features
-            # if self.pitch_extract is not None and pitch is None:
-            #     pitch, pitch_lengths = self.pitch_extract(
-            #         speech,
-            #         speech_lengths,
-            #         feats_lengths=feats_lengths,
-            #         durations=durations,
-            #         durations_lengths=durations_lengths,
-            #     )
-            # if self.energy_extract is not None and energy is None:
-            #     energy, energy_lengths = self.energy_extract(
-            #         speech,
-            #         speech_lengths,
-            #         feats_lengths=feats_lengths,
-            #         durations=durations,
-            #         durations_lengths=durations_lengths,
-            #     )
-
             # Normalize
             if self.normalize is not None:
                 feats, feats_lengths = self.normalize(feats, feats_lengths)
@@ -145,7 +127,7 @@ class ESPnetTTSModel(AbsESPnetModel):
             batch.update(durations=durations, durations_lengths=durations_lengths)
         #if self.pitch_extract is not None and pitch is not None:
         if pitch is not None:
-            batch.update(pitch=pitch)
+            batch.update(pitch=pitch, pitch_lengths=pitch_lengths)
         #if self.energy_extract is not None and energy is not None:
         #    batch.update(energy=energy, energy_lengths=energy_lengths)
         if self.tts.require_raw_speech:
@@ -196,22 +178,6 @@ class ESPnetTTSModel(AbsESPnetModel):
         else:
             # Use precalculated feats (feats_type != raw case)
             feats, feats_lengths = speech, speech_lengths
-        if self.pitch_extract is not None:
-            pitch, pitch_lengths = self.pitch_extract(
-                speech,
-                speech_lengths,
-                feats_lengths=feats_lengths,
-                durations=durations,
-                durations_lengths=durations_lengths,
-            )
-        if self.energy_extract is not None:
-            energy, energy_lengths = self.energy_extract(
-                speech,
-                speech_lengths,
-                feats_lengths=feats_lengths,
-                durations=durations,
-                durations_lengths=durations_lengths,
-            )
 
         # store in dict
         feats_dict = dict(feats=feats, feats_lengths=feats_lengths)

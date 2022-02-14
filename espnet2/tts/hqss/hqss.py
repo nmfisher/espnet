@@ -12,9 +12,10 @@ from typing import Tuple
 
 import torch
 import torch.nn.functional as F
+import time
 
 from typeguard import check_argument_types
-from espnet.nets.pytorch_backend.rnn.attentions import AttLoc,AttLocRec
+from espnet.nets.pytorch_backend.hqss.loc_attn import AttLoc
 from espnet.nets.pytorch_backend.hqss.loss import HQSSLoss
 from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 from espnet.nets.pytorch_backend.hqss.decoder import Decoder
@@ -37,6 +38,7 @@ class HQSS(AbsTTS):
         # network structure related
         idim: int,
         odim: int,
+        num_speakers: int,
         embed_dim: int = 512,
         spkr_embed_dim: int = 64,
         econv_layers: int = 3,
@@ -63,7 +65,7 @@ class HQSS(AbsTTS):
         bce_pos_weight: float = 5.0,
         loss_type: str = "L1+L2",
         reduction_factor: int = 1,
-        spks: Optional[int] = None,
+        num_prosody_clusters=5,
         inference_only= False
     ):
         """Initialize HQSS module.
@@ -106,11 +108,9 @@ class HQSS(AbsTTS):
         assert check_argument_types()
         super().__init__()
 
-        self.spks = spks
         self.langs = None
         self.spk_embed_dim = spkr_embed_dim
-
-        print(f"Using odim {odim} zoneou {zoneout_rate}")
+        self.spks = num_speakers
 
         # store hyperparameters
         self.idim = idim
@@ -121,8 +121,7 @@ class HQSS(AbsTTS):
         self.loss_type = loss_type
         
         # set padding idx
-        padding_idx = 0
-        self.padding_idx = padding_idx
+        self.padding_idx = 0
 
         # define network modules
         self.enc = Encoder(
@@ -131,11 +130,10 @@ class HQSS(AbsTTS):
             econv_chans=econv_chans,
             use_batch_norm=use_batch_norm,
             dropout_rate=dropout_rate,
-            padding_idx=padding_idx,
+            padding_idx=self.padding_idx,
         )
 
-        spks = 10
-        self.spk_embd = torch.nn.Embedding(spks, self.spk_embed_dim)
+        self.spk_embd = torch.nn.Embedding(num_speakers, self.spk_embed_dim)
 
         # self.residual_encoder = ResidualEncoder()
 
@@ -143,7 +141,8 @@ class HQSS(AbsTTS):
             econv_chans=econv_chans,
             use_batch_norm=use_batch_norm,
             dropout_rate=dropout_rate,
-            padding_idx=padding_idx,
+            padding_idx=self.padding_idx,
+            num_clusters=num_prosody_clusters
         )
         self.dec = Decoder(
             econv_chans,
@@ -176,7 +175,7 @@ class HQSS(AbsTTS):
             zoneout_rate=zoneout_rate
         )
 
-        self.speaker_classifier = SpeakerClassifier(self.odim, spks)
+        self.speaker_classifier = SpeakerClassifier(self.odim, num_speakers)
         
         self.hqss_loss = HQSSLoss(  
             use_masking=True,
@@ -184,25 +183,28 @@ class HQSS(AbsTTS):
             bce_pos_weight=bce_pos_weight,
         )
 
-    @torch.jit.export
+    
     def forward(
         self,
         text: torch.Tensor,
         text_lengths: torch.Tensor,
-        feats: torch.Tensor,
+        feats: torch.Tensor, 
         feats_lengths: torch.Tensor,
         durations:torch.Tensor,
         durations_lengths:torch.Tensor,
         pitch:torch.Tensor,
+        pitch_lengths:torch.Tensor,
         sids: torch.Tensor,
-    ) -> Tuple[torch.Tensor, Dict[str, torch.Tensor], torch.Tensor]:
-        """Calculate forward propagation.
+        
+    ) -> torch.Tensor:
+        """Calculate forward propagation. 
+        Since torch.jit.script is used to export the model, this method handles both training and inference.
 
         Args:
             text (LongTensor): Batch of padded character ids (B, T_text).
             text_lengths (LongTensor): Batch of lengths of each input batch (B,).
-            feats (Tensor): Batch of padded target features (B, T_feats, odim).
-            feats_lengths (LongTensor): Batch of the lengths of each target (B,).
+            feats (Tensor): Batch of padded target features (B, T_feats, odim). (training only)
+            feats_lengths (LongTensor): Batch of the lengths of each target (B,). (training only)
         Returns:
             Tensor: Loss scalar value.
             Dict: Statistics to be monitored.
@@ -237,13 +239,14 @@ class HQSS(AbsTTS):
         
         # encode phone sequence
         phone_enc, _ = self.enc(xs, ilens)
-                
+              
         prosody_enc, _ = self.prosody_enc(durations, pitch, durations_lengths)
         
         after_outs, before_outs, logits, weights = self.dec(
           phone_enc, 
-          prosody_enc,
           ilens, 
+          prosody_enc,
+          durations_lengths,
           ys,
           spkr_emb
         )
@@ -270,20 +273,49 @@ class HQSS(AbsTTS):
             bce_loss=bce_loss,
         )
 
-        # stats.update(loss=loss.item())
-        # loss, stats, weight = force_gatherable(
-        #     (loss, stats, batch_size), loss.device
-        # )
-        return loss, stats, torch.zeros(0)
+        stats.update(loss=loss.item())
+        loss, stats, weight = force_gatherable(
+            (loss, stats, batch_size), loss.device
+        )
+        return loss, stats, weight
+
+    def export(
+        self,
+        text: torch.Tensor,
+        text_lengths: torch.Tensor,
+        durations:torch.Tensor,
+        durations_lengths:torch.Tensor,
+        pitch:torch.Tensor,
+        pitch_lengths:torch.Tensor,
+        sids:torch.Tensor,
+    ) -> torch.Tensor:
+        
+        # add eos at the last of sequence
+        text = F.pad(text, [0, 1], "constant", float(self.eos))
+
+        # get speaker embeddings
+        spkr_emb = self.spk_embd(sids)
+
+        ilens = text_lengths + 1
+
+        # encode phone sequence
+        phone_enc, _ = self.enc(text, ilens)
+
+        prosody_enc, _ = self.prosody_enc(durations, pitch, durations_lengths)
+        
+        outs,probs, logits = self.dec.inference(phone_enc, ilens, prosody_enc, durations_lengths, spkr_emb)
+        
+        return outs 
 
     def inference(
         self,
         text: torch.LongTensor,
-        #text_lengths: torch.Tensor,
         durations:torch.Tensor,
         pitch:torch.Tensor,
         sids:torch.Tensor,
         durations_lengths:Optional[torch.Tensor] = None,
+        feats_lengths:Optional[torch.Tensor] = None,
+        pitch_lengths:Optional[torch.Tensor] = None,
         feats: Optional[torch.Tensor] = None,
         threshold: float = 0.5,
         minlenratio: float = 0.0,
@@ -313,19 +345,18 @@ class HQSS(AbsTTS):
                 * att_w (Tensor): Attention weights (T_feats, T).
 
         """
-        # print(text.size())
-        # print(durations.size())
-        #print(durations_lengths.size())
-        # print(pitch.size())
-        # print(sids.size())
-        x = text     
-
         # add eos at the last of sequence
-        x = F.pad(x, [0, 1], "constant", float(self.eos))
+        plens = torch.tensor([text.size(0)])
+        text = F.pad(text, [0, 1], "constant", float(self.eos))
+        ilens = torch.tensor([text.size(0)])
 
-        #ilens = text_lengths + 1
-
-        #sids = sids.unsqueeze(1)
+        text = text.unsqueeze(0)
+        
+        durations = durations+2
+        durations[durations > 4] = 4
+        print(durations)
+        durations = durations.unsqueeze(0)        
+        pitch = pitch.unsqueeze(0)
 
         #res_emb = self.residual_encoder(ys)
 
@@ -333,40 +364,18 @@ class HQSS(AbsTTS):
         spkr_emb = self.spk_embd(sids)
 
         # encode phone sequence
-        phone_enc = self.enc.inference(x)
+        phone_enc, _ = self.enc(text, ilens)
                 
-        prosody_enc = self.prosody_enc.inference(durations, pitch)
+        prosody_enc, _ = self.prosody_enc(durations, pitch, plens)
 
-        outs,probs, logits = self.dec.inference(phone_enc, prosody_enc, spk_embeds=spkr_emb)
-
-        # outs.cpu().numpy().tofile("/tmp/tofile.npy")
+        outs,probs, logits = self.dec.inference(phone_enc, ilens, prosody_enc, plens, spkr_emb)
+        
+        idx = int(time.time())
+        outs.cpu().numpy().T.tofile(f"/tmp/tofile_{idx}.npy")
         
         return dict(feat_gen=outs.squeeze(0), prob=None, att_w=None)
         
 
-    @torch.jit.export
-    def export(
-        self,
-        text: torch.Tensor,
-        durations:torch.Tensor,
-        pitch:torch.Tensor,
-        sids:torch.Tensor,
-    ) -> torch.Tensor:
-
-        # add eos at the last of sequence
-        text = F.pad(text, [0, 1], "constant", self.eos)
-
-        # get speaker embeddings
-        spkr_emb = self.spk_embd(sids)
-
-        # encode phone sequence
-        phone_enc = self.enc.inference(text)
-
-        prosody_enc = self.prosody_enc.inference(durations, pitch)
-
-        outs,probs, logits = self.dec.inference(phone_enc, prosody_enc, spk_embeds=spkr_emb)
-        
-        return outs.squeeze(0)
     
     @torch.jit.ignore
     def _plot_and_save_attention(self, att_w, filename, xtokens=None, ytokens=None):

@@ -101,23 +101,12 @@ class Encoder(torch.nn.Module):
         for conv in self.convs:
             cbhg_out, _ = conv(cbhg_out, ilens)
         
-        xs_cbhg = pack_padded_sequence(cbhg_out, ilens, batch_first=True, enforce_sorted=False)
-        xs_cbhg, hlens = pad_packed_sequence(xs_cbhg, batch_first=True)
+        # if self.training:
+        #   xs_cbhg = pack_padded_sequence(cbhg_out, ilens.cpu(), batch_first=True, enforce_sorted=False)
+        #   xs_cbhg, hlens = pad_packed_sequence(xs_cbhg, batch_first=True)
+        # else:
+        xs_cbhg = cbhg_out
+        hlens = None
 
         return xs_cbhg, hlens
 
-    def inference(self, x):
-        """Inference.
-
-        Args:
-            x (Tensor): The sequeunce of character ids (T,)
-                    or acoustic feature (T, idim * encoder_reduction_factor).
-
-        Returns:
-            Tensor: The sequences of encoder states(T, eunits).
-
-        """
-        xs = x.unsqueeze(0)
-        ilens = torch.tensor([x.size(0)])
-
-        return self.forward(xs, ilens)[0][0]

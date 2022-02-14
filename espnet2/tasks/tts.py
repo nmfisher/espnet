@@ -206,6 +206,12 @@ class TTSTask(AbsTask):
             default=None,
             help="Specify g2p method if --token_type=phn",
         )
+        group.add_argument(
+            "--num_speakers",
+            type=int_or_none,
+            default=None,
+            help="Total number of speakers (used for speaker embedding size)",
+        )
 
         for class_choices in cls.class_choices_list:
             # Append --<name> and --<name>_conf.
@@ -309,7 +315,12 @@ class TTSTask(AbsTask):
         # 3. TTS
         tts_class = tts_choices.get_class(args.tts)
         
-        tts = tts_class(idim=vocab_size, odim=odim, **args.tts_conf)
+        tts = tts_class(
+          idim=vocab_size, 
+          odim=odim, 
+          num_speakers=args.num_speakers,
+          **args.tts_conf
+        )
 
         # 4. Extra components
         # pitch_extract = None

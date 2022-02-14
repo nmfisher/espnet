@@ -14,8 +14,7 @@ from torch.nn.utils.rnn import pack_padded_sequence
 from torch.nn.utils.rnn import pad_packed_sequence
 from espnet.nets.pytorch_backend.hqss.prenet import Prenet
 
-from espnet.nets.pytorch_backend.tacotron2.cbhg import CBHG
-from espnet.nets.pytorch_backend.tacotron2.cbhg import CBHGLoss
+from espnet.nets.pytorch_backend.hqss.cbhg import CBHG
 
 def encoder_init(m):
     """Initialize encoder parameters."""
@@ -92,7 +91,7 @@ class ProsodyEncoder(torch.nn.Module):
         """
         durations_emb = self.duration_embed(durations)
         pitch_emb = self.pitch_embed(pitch)
-
+        
         xs_emb = torch.cat([durations_emb, pitch_emb],-1)
 
         xs_pre = self.prenet(xs_emb)
@@ -100,28 +99,14 @@ class ProsodyEncoder(torch.nn.Module):
         cbhg_out = xs_pre
         
         for conv in self.convs:
-            cbhg_out, _ = conv(cbhg_out, ilens)
-        
-        xs_cbhg = pack_padded_sequence(cbhg_out, ilens, batch_first=True, enforce_sorted=False)
-        xs_cbhg, hlens = pad_packed_sequence(xs_cbhg, batch_first=True)
+            cbhg_out, _ = conv(cbhg_out, ilens) 
+
+        if self.training:
+          xs_cbhg = pack_padded_sequence(cbhg_out, ilens.cpu(), batch_first=True, enforce_sorted=False)
+          xs_cbhg, hlens = pad_packed_sequence(xs_cbhg, batch_first=True)
+        else:
+          xs_cbhg = cbhg_out
+          hlens = None
 
         return xs_cbhg, hlens
-
-    def inference(self, durations, pitch):
-        """Inference.
-
-        Args:
-            x (Tensor): The sequeunce of character ids (T,)
-                    or acoustic feature (T, idim * encoder_reduction_factor).
-
-        Returns:
-            Tensor: The sequences of encoder states(T, eunits).
-
-        """
-        durations = durations.unsqueeze(0)
-        pitch = pitch.unsqueeze(0)
-
-        ilens = torch.tensor([durations.size(1)])
-
-        return self.forward(durations, pitch, ilens)[0].squeeze(0)
         

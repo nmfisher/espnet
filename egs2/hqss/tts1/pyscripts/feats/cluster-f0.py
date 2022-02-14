@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python3.7
 from functools import reduce
 import itertools
 import argparse
@@ -10,7 +10,7 @@ from espnet.utils.cli_readers import file_reader_helper
 from espnet.utils.cli_utils import get_commandline_args
 import pyworld
 import librosa
-
+from kaldiio import ReadHelper, WriteHelper
 from sklearn.cluster import KMeans
 
 
@@ -107,17 +107,12 @@ def extract(wavs, durations, transcripts, sample_rate, hop_length,f0_values):
                         (i - start) if i != start else f0[i]
                     utt_f0.append(phone_f0)
                     start = i
-                    #if phone not in f0_values:
-                    ##    f0_values[phone] = []
-                    #f0_values[phone].append(phone_f0)
                     break
 
         if len(utt_f0) != len(transcript):
             #print(f"{len(phone_f0)} {len(phone_times)}")
-            print(f"{phone_f0} {phone_times}")
-            print(t)
-            print(phone_times)
-            print(transcript)
+            print(f"{path}\n transcript : {transcript}\n f0 : {utt_f0}\n DIO timestamps {t}\n phone_times {phone_times}\n original durations: {utt_durations}")
+            raise Exception("length mismatch")
             # if phone_times[-1] > t[-1]:
         #    phone_f0.append((f0[-1] + f0[start]) / (len(f0) - start))
         yield (utt_id, utt_f0)

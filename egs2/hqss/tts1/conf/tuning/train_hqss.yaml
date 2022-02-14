@@ -11,7 +11,7 @@ tts_conf:                        # keyword arguments for the selected model
     econv_chans: 512             # number of channels in convolutional layer
     econv_filts: 5               # filter size of convolutional layer
     adim: 128                    # attention dimension
-    
+    num_prosody_clusters: 5
     #reduction_factor: 1
 #pitch_extract: dio           # pitch extractor type
 #pitch_normalize: global_mvn  # normalizer for the pitch feature

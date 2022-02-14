@@ -25,7 +25,7 @@ echo "$0 $*" 1>&2 # Print the command line for logging
 
 . parse_options.sh || exit 1;
 
-if [ $# -lt 2 ] || [ $# -gt 10 ]; then
+if [ $# -lt 2 ] || [ $# -gt 11 ]; then
     echo "${help_message}" 1>&2
     exit 1;
 fi
@@ -42,15 +42,19 @@ valid_transcript=$7
 valid_clusters_out=$8
 f0min=$9
 f0max=${10}
+num_clusters=${11}
 
 data=$(dirname ${train_durations})
 logdir=${data}/log
 mkdir -p ${logdir}
 
+sr=16000
+hop_length=256
+
 # TODO - put sample rate/hop_len/num clusters etc into config
 nj=1
 ${cmd} JOB=1:${nj} ${logdir}/cluster_durations.JOB.log \
-    pyscripts/feats/cluster-f0.py 16000 256 15  \
+    pyscripts/feats/cluster-f0.py ${sr} ${hop_length} ${num_clusters}  \
     ${train_wav} ${train_durations} ${train_transcript}  ${train_clusters_out} \
     ${valid_wav} ${valid_durations} ${valid_transcript} ${valid_clusters_out} \
     ${f0min} ${f0max}
