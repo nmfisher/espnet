@@ -42,12 +42,12 @@ if __name__ == "__main__":
     # Load Pretrained model and testing wav generation
     #logging.info("Preparing pretrained model from: %s", args.tts_tag)
     device = "cpu"#text2speech.device
-    # tts = Text2Speech.from_pretrained(
-    #     model_file="./exp/tts_train_hqss_bfcc_phn_none/train.loss.best.pth",
-    #     train_config="./exp/tts_train_hqss_bfcc_phn_none/config.yaml",
-    #     vocoder_tag=None,
-    #     device=device,
-    # )
+    tts = Text2Speech.from_pretrained(
+        model_file="./exp/tts_train_hqss_bfcc_phn_none/train.loss.best.pth",
+        train_config="./exp/tts_train_hqss_bfcc_phn_none/config.yaml",
+        vocoder_tag=None,
+        device=device,
+    )
 
     # Prepare modules for conversion
     logging.info("Generate ONNX models")
@@ -55,8 +55,8 @@ if __name__ == "__main__":
         
         # preprocessing = text2speech.preprocess_fn
         # model_tts = text2speech.tts
-        model = HQSS(20,20,zoneout_rate=0.0)
-        # model = tts.model.tts
+        # model = HQSS(20,20,zoneout_rate=0.0)
+        model = tts.model.tts
         model.eval()
 
         inputs = (
@@ -84,13 +84,16 @@ if __name__ == "__main__":
             # model_tts.to(device),
             inputs,
             'tts_model.onnx',
-            example_outputs=torch.zeros(1, 75, 20),
+            example_outputs=(
+              torch.zeros(1, 75, 20), # PCM output is B x num_frames x num_feats
+              torch.zeros(1, 75, 16) # phone_att_ws output is B x num_frames x text_input_length
+            ), 
             export_params=True,
-            opset_version=11,
+            opset_version=12,
             do_constant_folding=False,
             verbose=True,
             input_names=['phones', 'phone_lens', 'durations', 'duration_lens', 'pitch', 'pitch_lens', 'sids' ],
-            output_names=['wav'],
+            output_names=['pcm','phone_att_ws'],
             dynamic_axes={
                 'phones': {
                     1: 'length'
@@ -101,7 +104,10 @@ if __name__ == "__main__":
                 'pitch': {
                     1: 'length'
                 },
-                'wav': {
+                'pcm': {
+                    1: 'length'
+                },
+                'phone_att_ws': {
                     1: 'length'
                 }
             }
