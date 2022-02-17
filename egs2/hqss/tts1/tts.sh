@@ -222,7 +222,6 @@ fi
 # no need to recreate token_list as this will always be a list of IPA phones
 mkdir -p "${dumpdir}/token_list"
 token_list="${dumpdir}/token_list/tokens.txt"
-cp "tokens.txt" $token_list
 
 
 # Set tag for naming of model directory
