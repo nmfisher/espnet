@@ -9,11 +9,9 @@ import torch.nn.functional as F
 from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
 from espnet.nets.pytorch_backend.nets_utils import to_device
 
-from typing import Optional
-
 
 def _apply_attention_constraint(
-    e, last_attended_idx, backward_window : int =1, forward_window: int =3
+    e, last_attended_idx, backward_window=1, forward_window=3
 ):
     """Apply monotonic attention constraint.
 
@@ -283,27 +281,29 @@ class AttLoc(torch.nn.Module):
         self.dunits = dunits
         self.eprojs = eprojs
         self.att_dim = att_dim
-        # we can't initialize these to None, otherwise the TorschScript compiler will complain about missing NoneType
-        self.reset()
-        self.han_mode = han_mode  
+        self.h_length = None
+        self.enc_h = None
+        self.pre_compute_enc_h = None
+        self.mask = None
+        self.han_mode = han_mode
 
     def reset(self):
         """reset states"""
-        self.h_length = -1
-        self.enc_h : Optional[torch.Tensor] = None
-        self.pre_compute_enc_h : Optional[torch.Tensor] = None
-        self.mask : Optional[torch.Tensor] = None
+        self.h_length = None
+        self.enc_h = None
+        self.pre_compute_enc_h = None
+        self.mask = None
 
     def forward(
         self,
-        enc_hs_pad : torch.Tensor,
+        enc_hs_pad,
         enc_hs_len,
         dec_z,
-        att_prev : Optional[torch.Tensor],
-        scaling: float = 2.0,
-        last_attended_idx : Optional[torch.Tensor] = None,
-        backward_window : int = 1,
-        forward_window : int  = 3,
+        att_prev,
+        scaling=2.0,
+        last_attended_idx=None,
+        backward_window=1,
+        forward_window=3,
     ):
         """Calculate AttLoc forward propagation.
 
@@ -341,7 +341,7 @@ class AttLoc(torch.nn.Module):
             att_prev = 1.0 - make_pad_mask(enc_hs_len).to(
                 device=dec_z.device, dtype=dec_z.dtype
             )
-            att_prev = att_prev / torch.tensor(enc_hs_len).to(att_prev.device).unsqueeze(-1)
+            att_prev = att_prev / att_prev.new(enc_hs_len).unsqueeze(-1)
 
         # att_prev: utt x frame -> utt x 1 x 1 x frame
         # -> utt x att_conv_chans x 1 x frame
