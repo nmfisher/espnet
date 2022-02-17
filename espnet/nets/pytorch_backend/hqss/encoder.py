@@ -39,13 +39,18 @@ class Encoder(torch.nn.Module):
         idim,
         input_layer="embed",
         embed_dim=512,
+        prosody_embed_dim=12,
+        num_prosody_clusters=5,
         cbhg_layers=1,
         prenet_layers=1,
         prenet_units=256,
-        econv_chans=512,
+        cbhg_conv_chans=512,
+        cbhg_conv_layers=5,
+        cbhg_conv_filts=5,
         use_batch_norm=True,
         dropout_rate=0.5,
         padding_idx=0,
+        cbhg_gru_units=128
     ):
         """Initialize encoder module.
 
@@ -64,20 +69,22 @@ class Encoder(torch.nn.Module):
 
         # define network layer modules
         self.embed = torch.nn.Embedding(idim, embed_dim, padding_idx=padding_idx)
+        self.pitch_embed = torch.nn.Embedding(num_prosody_clusters, prosody_embed_dim, padding_idx=padding_idx)
+        self.duration_embed = torch.nn.Embedding(num_prosody_clusters, prosody_embed_dim,  padding_idx=padding_idx)
 
-        self.prenet = Prenet(embed_dim, n_layers=prenet_layers, n_units=prenet_units, dropout_rate=dropout_rate)
+        self.prenet = Prenet(embed_dim + 2*prosody_embed_dim, n_layers=prenet_layers, n_units=prenet_units, dropout_rate=dropout_rate)
 
         self.convs = torch.nn.ModuleList()
         for layer in six.moves.range(cbhg_layers):
             if layer == 0:
-                self.convs += [ CBHG(prenet_units, econv_chans) ]
+                self.convs += [ CBHG(prenet_units, cbhg_conv_chans, conv_bank_layers=cbhg_conv_layers, conv_proj_filts=cbhg_conv_filts) ]
             else:
-                self.convs += [ CBHG(econv_chans, econv_chans) ]
+                self.convs += [ CBHG(cbhg_conv_chans, cbhg_conv_chans, conv_bank_layers=cbhg_conv_layers, conv_proj_filts=cbhg_conv_filts) ]
 
         # initialize
         self.apply(encoder_init)
 
-    def forward(self, xs, ilens:torch.Tensor):
+    def forward(self, phones, durations, pitches, ilens:torch.Tensor):
         """Calculate forward propagation.
 
         Args:
@@ -92,7 +99,11 @@ class Encoder(torch.nn.Module):
 
         """
         
-        xs_emb = self.embed(xs)
+        xs_emb = torch.cat([
+          self.embed(phones),
+          self.duration_embed(durations),
+          self.pitch_embed(pitches)
+        ],dim=-1)
         
         xs_pre = self.prenet(xs_emb)
 
@@ -101,12 +112,12 @@ class Encoder(torch.nn.Module):
         for conv in self.convs:
             cbhg_out, _ = conv(cbhg_out, ilens)
         
-        # if self.training:
-        #   xs_cbhg = pack_padded_sequence(cbhg_out, ilens.cpu(), batch_first=True, enforce_sorted=False)
-        #   xs_cbhg, hlens = pad_packed_sequence(xs_cbhg, batch_first=True)
-        # else:
-        xs_cbhg = cbhg_out
-        hlens = None
+        if self.training:
+          xs_cbhg = pack_padded_sequence(cbhg_out, ilens.cpu(), batch_first=True, enforce_sorted=False)
+          xs_cbhg, hlens = pad_packed_sequence(xs_cbhg, batch_first=True)
+        else:
+          xs_cbhg = cbhg_out
+          hlens = None
 
         return xs_cbhg, hlens
 

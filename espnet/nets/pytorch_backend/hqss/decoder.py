@@ -36,11 +36,15 @@ class Decoder(torch.nn.Module):
         attn_p,
         dlayers=2,
         dunits=512,
+        prenet_layers=2,
         prenet_units=512,
         dropout_rate=0.5,
         zoneout_rate=0.1,
         use_batch_norm=True,
         spkr_embed_dim=64,
+        postnet_layers=3,
+        postnet_chans=512,
+        postnet_filts=5,
         device="cuda"
     ):
         """Initialize HQSS decoder module.
@@ -73,25 +77,35 @@ class Decoder(torch.nn.Module):
 
         self.dropout_rate = dropout_rate
 
-        self.prenet = Prenet(self.odim, n_units=prenet_units,
+        self.prenet = Prenet(self.odim,n_layers=prenet_layers, n_units=prenet_units,
                              dropout_rate=dropout_rate)
         
         self.lstm = torch.nn.ModuleList()
         for layer in six.moves.range(dlayers):
-            iunits = (self.idim * 2) + prenet_units + spkr_embed_dim if layer == 0 else dunits
+            if layer == 0:
+              iunits = self.idim + prenet_units #+ spkr_embed_dim  
+            else:
+               iunits = dunits
             lstm = torch.nn.LSTMCell(iunits, dunits)
             if zoneout_rate > 0.0:
                 lstm = ZoneOutCell(lstm, zoneout_rate)
             self.lstm += [lstm]
         
-        self.postnet = Postnet(odim, odim, dropout_rate=dropout_rate,use_batch_norm=use_batch_norm)
-        
-        iunits = (self.idim * 2) + dunits
+        iunits = self.idim + dunits
+
+        self.postnet = Postnet(
+          odim, 
+          odim, 
+          n_layers=postnet_layers, 
+          n_filts=postnet_filts,
+          n_chans=postnet_chans,
+          dropout_rate=dropout_rate,
+          use_batch_norm=use_batch_norm
+        )
 
         self.feat_out = torch.nn.Linear(
             iunits,
-            self.odim,
-            bias=False
+            self.odim
         )
 
         # FC for stop-token logits
@@ -101,9 +115,9 @@ class Decoder(torch.nn.Module):
 
     def _zero_state(self, hs):
         # return hs.new_zeros(hs.size(0), self.lstm[0].hidden_size)
-        return torch.zeros(hs.size(0), self.lstm[0].hidden_size)
+        return torch.zeros(hs.size(0), self.lstm[0].hidden_size).to(hs.device)
 
-    def forward(self, enc_z, ilens, enc_p, plens,  ys, spk_embeds):
+    def forward(self, enc_z, ilens, ys, spk_embeds):
         """Calculate forward propagation.
 
         Args:
@@ -123,8 +137,6 @@ class Decoder(torch.nn.Module):
 
         """
         
-        # ilens = list(map(int, ilens))
-
         c_list = [self._zero_state(enc_z).to(enc_z.device)]
         z_list = [self._zero_state(enc_z).to(enc_z.device)]
         for _ in self.lstm[1:]:
@@ -134,28 +146,39 @@ class Decoder(torch.nn.Module):
         prev_out = enc_z.new_zeros(enc_z.size(0), self.odim).to(enc_z.device)
 
         # initialize attention
-        prev_att_w : Optional [ torch.Tensor ] = None
-        prev_att_w2 : Optional [ torch.Tensor ] = None
-        self.att.reset(enc_z, ilens)
-        self.att_p.reset(enc_p, plens)
+        phone_att_c : Optional [ torch.Tensor ] = None
+      
+        self.att.reset()#enc_z, ilens)
 
         outs = []
         logits = []
-        att_ws = []
+        phone_att_ws = []
         
+        phone_att_w = None
+
+        last_attended_idx = 0
+
+        idxs = []
+
         for y in ys.transpose(0, 1):
 
-            att_c, att_w = self.att(enc_z, ilens, z_list[0], prev_att_w)
+            phone_att_c, phone_att_w = self.att(
+              enc_z, 
+              ilens, 
+              z_list[0], 
+              phone_att_w,
+              last_attended_idx=last_attended_idx
+            )
+           
+            last_attended_idx=int(phone_att_w.argmax())
 
-            att_c2, att_w2 = self.att_p(enc_p, plens, z_list[0], prev_att_w2)
-
+            idxs += [last_attended_idx]
             prenet_out = self.prenet(prev_out)
             
             xs = torch.cat([
-              att_c,
-              att_c2, 
+              phone_att_c,
               prenet_out,
-              spk_embeds.squeeze(1)
+              #spk_embeds.squeeze(1)
             ], dim=1).to(enc_z.device)
             
             
@@ -167,36 +190,38 @@ class Decoder(torch.nn.Module):
                       z_list[i - 1], (z_list[i], c_list[i])
                   )
 
-            zcs = torch.cat([z_list[-1], att_c, att_c2], dim=1)
+            zcs = torch.cat([
+              z_list[-1], 
+              phone_att_c, 
+            ], dim=1)
 
-            outs += [self.feat_out(zcs).view(enc_z.size(0), self.odim, -1)]
+            outs += [ 
+              self.feat_out(zcs).view(enc_z.size(0), self.odim, -1)
+            ]
             logits += [self.prob_out(zcs)]
-            att_ws += [att_w[0] if isinstance(att_w, tuple) else att_w ]
+            phone_att_ws += [ phone_att_w ]
 
-            prev_att_w = att_w 
 
             prev_out = y
-
+        
         logits = torch.cat(logits, dim=1)
 
         before_outs = torch.cat(outs, dim=2)
-        
-        att_ws = torch.stack(
-            att_ws, dim=1
-        ).to(enc_z.device)  # (B, Lmax, Tmax)
-        
-        post_out = self.postnet(before_outs)
 
+        post_out = self.postnet(before_outs)
+        
         after_outs = before_outs + post_out
 
-        return after_outs.transpose(1, 2), before_outs.transpose(1, 2), logits, att_ws
+        phone_att_ws = torch.stack(
+            phone_att_ws, dim=1
+        ).to(enc_z.device)  # (B, Lmax, Tmax)
+
+        return after_outs.transpose(1, 2), before_outs.transpose(1, 2), logits, phone_att_ws
 
     def inference(
         self,
         enc_z,
         ilens,
-        enc_p,
-        plens,
         spk_embeds,
         threshold : float = 0.5,
         minlen: int =10,
@@ -231,56 +256,52 @@ class Decoder(torch.nn.Module):
         assert len(enc_z.size()) == 3 # batch x seq_length x hdim
         assert len(spk_embeds.size()) == 2
         
-        # c_list = [self._zero_state(enc_z) for _ in self.lstm]
-        # z_list = [self._zero_state(enc_z) for _ in self.lstm]
         c_list = torch.zeros(enc_z.size(0), self.lstm[0].hidden_size, len(self.lstm))
         z_list = torch.zeros(enc_z.size(0), self.lstm[0].hidden_size, len(self.lstm))
 
         prev_out = enc_z.new_zeros(1, self.odim).to(enc_z.device)
 
         # initialize attention
-        prev_att_w = None
-        prev_att_w2 = None
-        self.att.reset(enc_z, ilens)
-        self.att_p.reset(enc_p, plens)
+        phone_att_w = None
+        
+        self.att.reset()#enc_z, ilens)
 
         outs : list[torch.Tensor] = []
-        att_ws = []
-        stop_prob = torch.zeros(0)
+        phone_att_ws = []
+        
         
         i = 0
 
-        maxlen = enc_z.size(1) * maxlenratio
-
-        # print(f"Using minlen {minlen}, max len {maxlen}, stop threshold {threshold} ")
+        maxlen = int(enc_z.size(1) * maxlenratio)
 
         xs = torch.zeros(0)
 
-        stop_prob = 0
+        stop_prob = 0.0
+        phone_att_c : Optional [ torch.Tensor ] = None
+        last_attended_idx = 0
 
-        while stop_prob < 0.5 and i < maxlen:
+        idxs = []
+
+        while i < minlen or (stop_prob < 0.5 and i < maxlen):
 
           prenet_out = self.prenet(prev_out)
 
-          att_c, att_w = self.att(
+          phone_att_c, phone_att_w = self.att(
               enc_z, 
               ilens, 
-              z_list[:,:,0], 
-              prev_att_w, 
+              z_list[:,:,-1], 
+              phone_att_w, 
+              last_attended_idx=last_attended_idx
           )
 
-          att_c2, att_w2 = self.att_p(
-              enc_p, 
-              plens, 
-              z_list[:,:,0], 
-              prev_att_w2, 
-          )
+          last_attended_idx=int(phone_att_w.argmax())
+
+          idxs += [last_attended_idx]
 
           xs = torch.cat([
-            att_c, 
-            att_c2, 
+            phone_att_c, 
             prenet_out,
-            spk_embeds
+            # spk_embeds
           ], dim=1)
           for j, layer in enumerate(self.lstm):
             if j == 0:
@@ -291,45 +312,43 @@ class Decoder(torch.nn.Module):
             )
             z_list[:,:,j] = z_
             c_list[:,:,j] = c_
-
-
-          # for j, layer in enumerate(self.lstm):
-          #   if j == 0:
-          #     z_list[0], c_list[0] = layer(xs, (z_list[0], c_list[0]))
-          #   else:
-          #     z_list[j], c_list[j] = layer(
-          #         z_list[j - 1], (z_list[j], c_list[j])
-          #   )
           
           zcs = torch.cat([
             z_list[:,:,-1], 
-            att_c, 
-            att_c2
+            phone_att_c, 
           ], dim=1) 
 
           out = self.feat_out(zcs)
-
-          out = out.reshape(enc_z.size(0), self.odim, 1)
-
-          outs += [ out ]
+          
+          outs += [ out.unsqueeze(-1) ]
 
           stop_prob = torch.sigmoid(self.prob_out(zcs))[0].item()
-          # if isinstance(att_w, tuple):
-          #   att_ws = att_ws + [att_w[0]]
-          # else:
-          #   att_ws = att_ws + [att_w]
+          
+          phone_att_ws += [phone_att_w ]
 
-          prev_out = out.squeeze(2)
+          prev_out = out
             
           i = i + 1
-      
-        outs_tensor = torch.cat(outs, dim=2)
+        print(f"Stopped at iteration {i} with stop_prob {stop_prob} and indices {idxs}")      
+        before_outs = torch.cat(outs, dim=2)
         
-        postnet_outs = self.postnet(outs_tensor)
-        postnet_outs = postnet_outs
-        outs_tensor = outs_tensor + postnet_outs
+        post_out = self.postnet(before_outs)
 
-        return outs_tensor, None, None#torch.cat(att_ws, 0)
+        # before_outs = self.feat_out(before_outs.transpose(1, 2))
+        
+        after_outs = before_outs + post_out
+        # IMPORTANT - note we don't transpose here due to a bug during ONNX export, so this will be returned as B x featdim x seq_length
+        # where feat_dim is the number of cepstral coefficients, probably 20
+        
+        phone_att_ws = torch.stack(
+            phone_att_ws, dim=1
+        ).squeeze()  # (B, Lmax, Tmax)
+
+        print(after_outs.size())
+        
+        return after_outs,  \
+              None, \
+              phone_att_ws
 
 
     
