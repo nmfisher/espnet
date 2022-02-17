@@ -7,7 +7,7 @@ from espnet.transform.transformation import Transformation
 from espnet.utils.cli_readers import file_reader_helper
 from espnet.utils.cli_utils import get_commandline_args
 from espnet.utils.cli_utils import is_scipy_wav_style
-from sklearn.cluster import KMeans
+
 
 def get_parser():
     parser = argparse.ArgumentParser(
@@ -57,6 +57,25 @@ def get_parser():
     )
     return parser
 
+def write_clusters(filepath, durations, transcripts, clusters, num_clusters):
+  written = 0
+  with open(filepath, "w") as outfile:
+    for (utt_id, utt_durations), (_, utt_phones) in zip(durations, transcripts):
+      cluster_ids = []
+      for phone, duration in zip(utt_phones, utt_durations):
+        for cluster_id in range(num_clusters):
+
+          if (cluster_id == 0 and duration <= clusters[phone][cluster_id]) or \
+              (cluster_id == num_clusters - 1 and duration >= clusters[phone][cluster_id]) or \
+              (duration <= clusters[phone][cluster_id] and duration > clusters[phone][cluster_id-1]):
+              cluster_ids.append(str(cluster_id))
+              break
+          else:
+            continue
+      outfile.write("{} {}\n".format(utt_id, " ".join(cluster_ids)))
+      written += 1
+  print("Wrote clusters for %d utterances to %s" % (written, filepath))
+
 def _open(path):
   with open(path, "r") as infile:
     for line in infile.readlines():
@@ -86,34 +105,44 @@ def main():
     train_durations = [(x[0], [int((float(d) * args.sample_rate) / args.hop_length) + 1 for d in x[1]]) for x in _open(args.train_durations)]
     valid_durations = [(x[0], [int((float(d) * args.sample_rate) / args.hop_length) + 1 for d in x[1]]) for x in _open(args.valid_durations)]
     
-    transcripts = _open(args.train_transcripts)
-    durations = []
-
-    for (utt_id, utt_durations), (utt_id, transcript) in zip(train_durations, transcripts):
+    print("Opening train transcripts at %s", args.train_transcripts)
+    train_transcripts = list(_open(args.train_transcripts))
+    valid_transcripts = list(_open(args.valid_transcripts))
+    phone_durations = {}
+    count = 0
+    for (utt_id, utt_durations), (_, transcript) in zip(train_durations, train_transcripts):
         if len(transcript) != len(utt_durations):
             print(utt_durations)
             raise Exception("%s : %d %d" % (utt_id, len(transcript), len(utt_durations)))
         for phone, duration in zip(transcript, utt_durations):
-            durations.append(duration)
-    durations = np.array(durations)
-    mean = durations.mean(axis = 0)
-    stddev = durations.std(axis = 0)
-    # obs for clustering
-    obs = [(d - mean) / stddev for d in durations]
-
-    # now we cluster
-    k=KMeans(args.num_clusters)
+            if phone not in phone_durations:
+                phone_durations[phone] = []
+            phone_durations[phone].append(duration)
+        count+=1
+    print("Processed %d utterances" % count)
     
-    k.fit(np.array(obs).reshape(len(obs), 1))
-        
-    # finally, iterate over the original dataset against to replace the phone durations with the phone cluster IDs
-    # results are written directly to the output
-    for out, durations in [(args.train_outfile, train_durations), (args.valid_outfile, valid_durations)]:
-      with open(out, "w") as outfile:
-        for (utt_id, utt_durations) in durations:
-            normalized = np.array([ ((d - mean) / stddev)  for d in utt_durations ])
-            cluster_ids=k.predict(normalized.reshape(len(utt_durations), 1)).tolist()
-            outfile.write("{} {}\n".format(utt_id, " ".join([str(c) for c in cluster_ids])))
+    # sort the list of durations for each phone and bucket into [num_clusters] s.t. each bucket contains an equal number of samples
+    # produces a list of floats [num_clusters] long
+    # each float corresponds to the high end of the cluster duration (and each index corresponds to the cluster label)
+    # e.g. {
+    #  "h":[10,15,27],
+    #  "e":[20,45,57], (so cluster 0 <= 20, cluster 1 <= 45, etc)
+    # etc
+    # }
+    # print(phone_durations)
+    phone_clusters = {}
+    for phone, durations in phone_durations.items():
+      durations.sort()
+      if len(durations) >= args.num_clusters:
+        clusters = durations[::len(durations) // args.num_clusters]
+        phone_clusters[phone] = clusters
+      else:
+        phone_clusters[phone] = list(range(args.num_clusters))
 
+    # finally, iterate over the original dataset against to replace the phone durations with the phone cluster IDs
+    # results are written directly to the output file
+    write_clusters(args.train_outfile, train_durations, train_transcripts, phone_clusters, args.num_clusters)
+    write_clusters(args.valid_outfile, valid_durations, valid_transcripts, phone_clusters, args.num_clusters)
+    
 if __name__ == "__main__":
     main()
