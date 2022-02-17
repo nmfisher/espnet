@@ -505,11 +505,13 @@ else
 fi
 
 # ========================== Data preparation is done here. ==========================
-
-
+if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
+  ./scripts/feats/make_bfcc.sh ${data_feats}/${train_set}
+  ./scripts/feats/make_bfcc.sh ${data_feats}/${valid_set}
+fi
 
 if ! "${skip_train}"; then
-    if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
+    if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
         _train_dir="${data_feats}/${train_set}"
         _valid_dir="${data_feats}/${valid_set}"
         log "Stage 5: TTS collect stats: train_set=${_train_dir}, valid_set=${_valid_dir}"
@@ -528,8 +530,7 @@ if ! "${skip_train}"; then
             # "sound" supports "wav", "flac", etc.
             _type=sound
         fi
-        ./scripts/feats/make_bfcc.sh ${data_feats}/${train_set}
-        ./scripts/feats/make_bfcc.sh ${data_feats}/${valid_set}
+
 
         if [ -n "${teacher_dumpdir}" ]; then
             _teacher_train_dir="${teacher_dumpdir}/${train_set}"
@@ -662,7 +663,7 @@ if ! "${skip_train}"; then
     fi
 
     
-    if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
+    if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ]; then
         _train_dir="${data_feats}/${train_set}"
         _valid_dir="${data_feats}/${valid_set}"
         log "Stage 6: TTS Training: train_set=${_train_dir}, valid_set=${_valid_dir}, config=${train_config}"
@@ -782,7 +783,7 @@ fi
 
 
 if ! "${skip_eval}"; then
-    if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ]; then
+    if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
         log "Stage 7: Decoding: training_dir=${tts_exp}"
 
         if ${gpu_inference}; then
