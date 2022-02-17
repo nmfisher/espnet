@@ -40,7 +40,10 @@ class ProsodyEncoder(torch.nn.Module):
         cbhg_layers=1,
         prenet_layers=2,
         prenet_units=256,
-        econv_chans=512,
+        cbhg_conv_chans=512,
+        cbhg_conv_layers=5,
+        cbhg_conv_filts=5,
+        cbhg_gru_units=128,
         use_batch_norm=True,
         dropout_rate=0.5,
         num_clusters=15,
@@ -68,9 +71,9 @@ class ProsodyEncoder(torch.nn.Module):
         self.convs = torch.nn.ModuleList()
         for layer in six.moves.range(cbhg_layers):
             if layer == 0:
-                self.convs += [ CBHG(prenet_units, econv_chans) ]
+                self.convs += [ CBHG(prenet_units, cbhg_conv_chans, conv_bank_layers=cbhg_conv_layers, conv_proj_filts=cbhg_conv_filts, gru_units=cbhg_gru_units) ]
             else:
-                self.convs += [ CBHG(econv_chans, econv_chans) ]
+                self.convs += [ CBHG(cbhg_conv_chans, cbhg_conv_chans, conv_bank_layers=cbhg_conv_layers, conv_proj_filts=cbhg_conv_filts, gru_units=cbhg_gru_units) ]
 
         # initialize
         self.apply(encoder_init)

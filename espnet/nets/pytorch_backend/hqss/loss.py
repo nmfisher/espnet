@@ -81,7 +81,8 @@ class HQSSLoss(torch.nn.Module):
         
         sids = sids.squeeze(1)
         
-        spk_loss = F.cross_entropy(spk_out, sids)
+        #spk_loss = F.cross_entropy(spk_out, sids)
+        spk_loss = None
 
         return l1_loss, mse_loss, bce_loss, spk_loss
 

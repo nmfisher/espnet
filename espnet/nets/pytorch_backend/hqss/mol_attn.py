@@ -1,3 +1,4 @@
+from pynini import escape
 import six
 
 import torch
@@ -28,7 +29,7 @@ class MOLAttn(torch.nn.Module):
         super(MOLAttn, self).__init__()
         self.enc_dim = enc_dim
         self.adim = adim
-        self.rnn = torch.nn.GRU(enc_dim + adim, adim, batch_first=True)
+        self.rnn = torch.nn.GRU(adim + enc_dim, adim, batch_first=True)
         
         self.num_dists = num_dists
         
@@ -41,25 +42,6 @@ class MOLAttn(torch.nn.Module):
                 torch.nn.Tanh(),
                 torch.nn.Linear(adim, self.num_dists * 3)
             ) 
-        # self.mean_net = torch.nn.Sequential(
-        #   torch.nn.Linear(adim, adim * 2), 
-        #   torch.nn.Tanh(),
-        #   torch.nn.Linear(adim * 2, 1)
-        # ) 
-
-        # self.scale_net = torch.nn.Sequential(
-        #   torch.nn.Linear(adim, adim * 2), 
-        #   torch.nn.Tanh(),
-        #   torch.nn.Linear(adim * 2, 1)
-        # ) 
-
-        # self.weight_net = torch.nn.Sequential(
-        #   torch.nn.Linear(adim, adim * 2), 
-        #   torch.nn.Tanh(),
-        #   torch.nn.Linear(adim * 2, 1)
-        # ) 
-
-        self.dec_proj = torch.nn.Linear(dec_dim, adim, bias=False)
 
         attn_init(self)
 
@@ -67,93 +49,85 @@ class MOLAttn(torch.nn.Module):
     def reset(self):
         """reset states"""
         self.means = []
-        self.out = None
-        self.context = None
-        self.state = None
-        self.enc_indices = None
+        self.enc_i = None
    
     def forward(
         self,
         enc_z,
-        ilens,
-        dec_step,
-        att_prev
+        rnn_c,
+        rnn_h,
+        last_out
     ):
         """Calculate AttLoc forward propagation.
-        :param torch.Tensor input: last acoustic frame
-        :param int i: decoder step        
-        :return: concatenated context + hidden state (B x N x D_dec)
+        :param torch.Tensor enc_z: encoder hidden states
+        :return: concatenated context (B x N x D_dec)
         :rtype: torch.Tensor
         """
         #torch.autograd.set_detect_anomaly(True)
         batch = len(enc_z)
         device = enc_z.device
 
-        if self.out is None:
-          self.out = enc_z.new_zeros(
+        if rnn_c is None:
+          rnn_c = enc_z.new_zeros(
             enc_z.size(0), 
             1,
-            self.adim
+            #self.enc_dim + self.adim
+            276
           )
-          self.context = enc_z.new_zeros(
-            enc_z.size(0), 
-            1,
-            self.enc_dim
-          )
-          self.enc_indices_pos = torch.FloatTensor(np.arange(enc_z.size(1))).to(device) + 0.5
-          self.enc_indices_neg = torch.FloatTensor(np.arange(enc_z.size(1))).to(device) - 0.5
+          self.enc_i_pos = torch.FloatTensor(np.arange(enc_z.size(1))).unsqueeze(0).expand(enc_z.size(0), enc_z.size(1)).to(device) + 0.5
+          self.enc_i_neg = torch.FloatTensor(np.arange(enc_z.size(1))).unsqueeze(0).expand(enc_z.size(0), enc_z.size(1)).to(device) - 0.5
+        else:
+          rnn_c = torch.cat([rnn_c, last_out], dim=1).unsqueeze(1)
+          assert rnn_h is not None
         
-        rnn_in = torch.cat([
-          self.out, 
-          self.context.view(
-            enc_z.size(0), 
-            1,
-            self.enc_dim
-          )
-        ], 2)
+        rnn_c, rnn_h = self.rnn(
+           rnn_c,rnn_h
+        )        
+
+        params = self.param_net(rnn_c)
         
-        out, self.state = self.rnn(
-           rnn_in,
-           self.state
-        )
+        rnn_w = []
+        self.means += [[]]
+        weights = []
+        f1 = []
+        f2 = []
+        for k in range(self.num_dists):
 
-        self.out = out # torch.tanh(out + self.dec_proj(dec_step))
-
-        params = torch.exp(self.param_net(self.out))
-
-        alignment_probs = []
-        all_means = []
-        for j in range(self.num_dists):
-
-          if len(self.means) > 0:
-            means = params[:,:,j*3]  + self.means[-1][j]
-            # means = torch.exp(self.mean_net(self.out))  + self.means[-1]
+          if len(self.means) > 1:
+            mean = torch.exp(params[:,:,k*3])  + self.means[-2][k]
           else:
-            means = params[:,:,j*3]
+            mean = torch.exp(params[:,:,k*3])
+          self.means[-1] += [ mean ]
 
-          all_means += [ means ]
-
-          # scales = torch.exp(self.scale_net(self.out)) 
-          scales = params[:,:,(j*3)+1]
-
-          # weights = F.softmax(torch.exp(self.weight_net(self.out)), dim=1)
-          weights = F.softmax(params[:,:,(j*3)+2], dim=1)
+          scale = torch.exp(params[:,:,(k*3)+1])
           
-          f1 = F.sigmoid((self.enc_indices_pos - means) / scales)
-          f2 = F.sigmoid((self.enc_indices_neg - means) / scales)
+          weights += [ params[:,:,(k*3)+2] ]
+          
+          s1 = F.sigmoid((self.enc_i_pos - mean) / scale).unsqueeze(1)
+          
+          f1 += [ s1 ] 
+          
+          f2 += [ F.sigmoid((self.enc_i_neg - mean) / scale).unsqueeze(1) ]
+       
+        f1 = torch.cat(f1, 1)
+        
+        f2 = torch.cat(f2, 1)
 
-          alignment_probs += [ weights * (f1 - f2) ]
-        self.means += [ all_means ]
-        #print(alignment_probs[-1].size())
-        alignment_probs = torch.stack(alignment_probs, 1)
+        weights = torch.cat(weights, 1)
         
-        alignment_probs = torch.sum(alignment_probs, 1).unsqueeze(2)
+        weights = F.softmax(weights, 1).unsqueeze(-1)
         
-        self.context = torch.sum(
-          alignment_probs * enc_z, 
+        weights = weights.expand(batch, weights.size(1), f1.size(2))
+        
+        rnn_w = (weights * (f1 - f2))
+                
+        rnn_w = rnn_w.sum(1).unsqueeze(-1)
+        
+        rnn_c = torch.sum(
+          rnn_w * enc_z, 
           dim=1
         ).to(device)
 
-        return self.context, alignment_probs
+        return rnn_c, rnn_w.squeeze(-1), rnn_h  
         
         

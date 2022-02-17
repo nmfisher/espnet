@@ -37,7 +37,7 @@ class Postnet(torch.nn.Module):
         super(Postnet, self).__init__()
         self.postnet = torch.nn.ModuleList()
         for layer in six.moves.range(n_layers - 1):
-            ichans = odim if layer == 0 else n_chans
+            ichans = idim if layer == 0 else n_chans
             ochans = odim if layer == n_layers - 1 else n_chans
             self.postnet += [
                 torch.nn.Sequential(

@@ -67,7 +67,7 @@ class ZoneOutCell(torch.nn.Module):
 
     def _zoneout(self, h : torch.Tensor, next_h, prob : float):
         if self.training:
-            mask = torch.zeros(h.size()).bernoulli_(prob)
+            mask = torch.zeros(h.size()).bernoulli_(prob).to(h.device)
             return mask * h + (1 - mask) * next_h
         else:
             return prob * h + (1 - prob) * next_h
