@@ -33,7 +33,7 @@ def _apply_attention_constraint(
 
     """
     if e.size(0) != 1:
-        raise NotImplementedError("Batch attention constraining is not yet supported.")
+        raise NotImplementedError(f"Batch attention constraining is not yet supported, size was {e.size()}")
     backward_idx = last_attended_idx - backward_window
     forward_idx = last_attended_idx + forward_window
     if backward_idx > 0:
@@ -341,7 +341,7 @@ class AttLoc(torch.nn.Module):
             att_prev = 1.0 - make_pad_mask(enc_hs_len).to(
                 device=dec_z.device, dtype=dec_z.dtype
             )
-            att_prev = att_prev / att_prev.new(enc_hs_len).unsqueeze(-1)
+            att_prev = att_prev / att_prev.new_tensor(enc_hs_len, dtype=torch.float).unsqueeze(-1)
 
         # att_prev: utt x frame -> utt x 1 x 1 x frame
         # -> utt x att_conv_chans x 1 x frame
@@ -684,7 +684,7 @@ class AttLocRec(torch.nn.Module):
             # initialize attention weight with uniform dist.
             # if no bias, 0 0-pad goes 0
             att_prev = to_device(enc_hs_pad, (1.0 - make_pad_mask(enc_hs_len).float()))
-            att_prev = att_prev / att_prev.new(enc_hs_len).unsqueeze(-1)
+            att_prev = att_prev / att_prev.new_tensor(enc_hs_len,dtype=torch.float).unsqueeze(-1)
 
             # initialize lstm states
             att_h = enc_hs_pad.new_zeros(batch, self.att_dim)
@@ -693,7 +693,7 @@ class AttLocRec(torch.nn.Module):
         else:
             att_prev = att_prev_states[0]
             att_states = att_prev_states[1]
-
+        
         # B x 1 x 1 x T -> B x C x 1 x T
         att_conv = self.loc_conv(att_prev.view(batch, 1, 1, self.h_length))
         # apply non-linear
