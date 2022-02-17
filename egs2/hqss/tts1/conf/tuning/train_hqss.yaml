@@ -5,19 +5,28 @@
 ##########################################################
 tts: hqss                   # model architecture
 tts_conf:                        # keyword arguments for the selected model
-    embed_dim: 128               # char or phn embedding dimension
-    spkr_embed_dim: 64
-    econv_layers: 3              # number of convolutional layers in encoder
-    econv_chans: 512             # number of channels in convolutional layer
-    econv_filts: 5               # filter size of convolutional layer
-    adim: 128                    # attention dimension
     num_prosody_clusters: 5
+    spkr_embed_dim: 64
+    # encoder
+    phone_embed_dim: 64               # phn embedding dimension
+    prosody_embed_dim: 16               # prosody embedding dimension
+    cbhg_layers: 3               # number of CBHG units in each encoder
+    cbhg_conv_layers: 4          # number of convolutional layers in each CBHG layer 
+    cbhg_conv_chans: 512         # number of channels in convolutional layer
+    cbhg_conv_filts: 5            # filter size of convolutional layer
+    cbhg_gru_units: 256
+    # attention 
+    adim: 256                    # attention dimension
+    # decoder
+    dropout_rate: 0.05
+    zoneout_rate: 0.05
+    prenet_layers: 4
+    prenet_units: 512
+    dlayers: 2
+    dunits: 512
+    postnet_layers: 5
+    postnet_chans: 512
     #reduction_factor: 1
-#pitch_extract: dio           # pitch extractor type
-#pitch_normalize: global_mvn  # normalizer for the pitch feature
-
-#energy_extract: energy       # energy extractor type
-#energy_normalize: global_mvn # normalizer for the energy feature
 
 ##########################################################
 #                  OPTIMIZER SETTING                     #
@@ -31,14 +40,14 @@ optim_conf:           # keyword arguments for selected optimizer
 ##########################################################
 #                OTHER TRAINING SETTING                  #
 ##########################################################
-num_iters_per_epoch: 500    # number of iterations per epoch
-max_epoch: 500              # number of epochs
+num_iters_per_epoch: 100    # number of iterations per epoch
+max_epoch: 100              # number of epochs
 grad_clip: 1              # gradient clipping norm
 grad_noise: false           # whether to use gradient noise injection
 accum_grad: 1               # gradient accumulation
 # batch_bins: 1600000       # batch bins (for feats_type=fbank)
-#batch_bins: 1280000         # batch bins (for feats_type=raw, *= n_shift / n_mels)
-batch_size: 2
+#batch_bins: 128000         # batch bins (for feats_type=raw, *= n_shift / n_mels)
+batch_size: 1
 batch_type: unsorted
 #batch_type: numel           # how to make batch
 allow_variable_data_keys: true
