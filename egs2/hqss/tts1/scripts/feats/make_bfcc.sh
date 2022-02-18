@@ -26,6 +26,8 @@ fi
 
 set -euo pipefail
 
+sample_rate=16000
+
 data=$1
 if [ $# -ge 2 ]; then
   logdir=$2
@@ -74,7 +76,7 @@ done
 utils/split_scp.pl ${scp} ${split_scps}
 
 ${cmd} JOB=1:${nj} ${logdir}/make_bfcc_${name}.JOB.log \
-    pyscripts/feats/compute-bfcc.py scp:${logdir}/wav.JOB.scp ark,scp:${bfccdir}/raw_bfcc_${name}.JOB.${ext},${bfccdir}/raw_bfcc_${name}.JOB.scp
+    pyscripts/feats/compute-bfcc.py scp:${logdir}/wav.JOB.scp ark,scp:${bfccdir}/raw_bfcc_${name}.JOB.${ext},${bfccdir}/raw_bfcc_${name}.JOB.scp $sample_rate
 
 # concatenate the .scp files together.
 for n in $(seq ${nj}); do
