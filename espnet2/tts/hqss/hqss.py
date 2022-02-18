@@ -386,12 +386,7 @@ class HQSS(AbsTTS):
 
         outs,probs, phone_att_ws = self.dec.inference(phone_enc, ilens, spkr_emb)
         
-        idx = int(time.time())
-        outs.cpu().numpy().T.tofile(f"/tmp/tofile_{idx}.npy")
-        phone_att_ws.cpu().numpy().tofile(f"/tmp/phone_att_weights.npy")
-        text.cpu().numpy().tofile(f"/tmp/phones.npy")
-        
-        return dict(feat_gen=outs.squeeze(0), prob=None, att_w=phone_att_ws)
+        return dict(feat_gen=outs.squeeze(0).transpose(0,1), prob=None, att_w=phone_att_ws)
         
 
     
