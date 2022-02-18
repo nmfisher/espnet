@@ -41,7 +41,8 @@ class NpyScpWriter:
         assert isinstance(value, np.ndarray), type(value)
         p = self.dir / f"{key}.npy"
         p.parent.mkdir(parents=True, exist_ok=True)
-        np.save(str(p), value)
+        #np.save(str(p), value)
+        value.tofile(str(p))
         self.fscp.write(f"{key} {p}\n")
 
         # Store the file path
