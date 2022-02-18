@@ -12,7 +12,7 @@ import subprocess
 
 def get_parser():
     parser = argparse.ArgumentParser(
-        description="converts raw phone durations to clustered labels",
+        description="computes Bark-scale cepstral coefficients from raw waveform. Important - input audio should be sampled at 16kHz.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--verbose", "-V", default=0, type=int, help="Verbose option")
@@ -21,6 +21,9 @@ def get_parser():
     )
     parser.add_argument(
         "outs", type=str, help="wspecifier for outputs (e.g. 'ark,scp:feats.ark,feats.scp')"
+    )
+    parser.add_argument(
+        "sample_rate", type=int, help="target sample rate"
     )
     return parser
 
@@ -40,6 +43,9 @@ def main():
     with WriteHelper(args.outs) as writer:
       with ReadHelper(args.wavs) as reader:
             for utt_id, (fs, audio) in reader: 
+              if fs != args.sample_rate:
+                raise Exception("Expected sample rate %d but %d was provided, please make sure all audio inputs are resampled first." % (args.sample_rate, fs))
+ 
               with open("/tmp/tmp.pcm", "wb") as outfile:
                 outfile.write(audio)
               process = subprocess.run(['lpcnet_demo', '-features', '/tmp/tmp.pcm', '/tmp/tmp.feats'])
