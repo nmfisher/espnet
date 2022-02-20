@@ -5,7 +5,7 @@ set -e
 set -u
 set -o pipefail
 
-fs=24000
+fs=16000
 n_fft=2048
 n_shift=300
 win_length=1200
@@ -24,7 +24,7 @@ inference_config=conf/decode.yaml
 train_set=train_no_dev
 valid_set=dev
 test_sets="dev test"
-g2p=pypinyin_g2p_phone
+g2p=none
 # Input: 卡尔普陪外孙玩滑梯
 # pypinyin_g2p: ka3 er3 pu3 pei2 wai4 sun1 wan2 hua2 ti1
 # pypinyin_g2p_phone: k a3 er3 p u3 p ei2 uai4 s un1 uan2 h ua2 t i1

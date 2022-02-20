@@ -98,7 +98,13 @@ class ESPnetTTSModel(AbsESPnetModel):
             else:
                 # Use precalculated feats (feats_type != raw case)
                 feats, feats_lengths = speech, speech_lengths
-
+            #for b in range(durations.size(0)):
+            #    s = durations[b,:].sum()
+            #    if s < feats_lengths[b]:
+            #        durations[b,-1] += (feats_lengths[b] - s)
+            #    elif s > feats_lengths[b]:
+            #        durations[b,0] -= (s - feats_lengths[b])
+            #    assert(durations[b,:].sum() == feats_lengths[b])
             # Extract auxiliary features
             if self.pitch_extract is not None and pitch is None:
                 pitch, pitch_lengths = self.pitch_extract(
@@ -116,7 +122,6 @@ class ESPnetTTSModel(AbsESPnetModel):
                     durations=durations,
                     durations_lengths=durations_lengths,
                 )
-
             # Normalize
             if self.normalize is not None:
                 feats, feats_lengths = self.normalize(feats, feats_lengths)
@@ -124,7 +129,6 @@ class ESPnetTTSModel(AbsESPnetModel):
                 pitch, pitch_lengths = self.pitch_normalize(pitch, pitch_lengths)
             if self.energy_normalize is not None:
                 energy, energy_lengths = self.energy_normalize(energy, energy_lengths)
-
         # Make batch for tts inputs
         batch = dict(
             text=text,
@@ -194,6 +198,13 @@ class ESPnetTTSModel(AbsESPnetModel):
         else:
             # Use precalculated feats (feats_type != raw case)
             feats, feats_lengths = speech, speech_lengths
+        #for b in range(durations.size(0)):
+        #    s = durations[b,:].sum() 
+        #    if s < feats_lengths[b]:
+        #        durations[b,-1] += (feats_lengths[b] - s)
+        #    elif s > feats_lengths[b]:
+        #        durations[b,0] -= (s - feats_lengths[b])
+
         if self.pitch_extract is not None:
             pitch, pitch_lengths = self.pitch_extract(
                 speech,

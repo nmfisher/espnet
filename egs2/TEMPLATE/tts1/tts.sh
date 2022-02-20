@@ -40,7 +40,7 @@ inference_nj=32      # The number of parallel jobs in decoding.
 gpu_inference=false  # Whether to perform gpu decoding.
 dumpdir=dump         # Directory to dump features.
 expdir=exp           # Directory to save experiments.
-python=python3       # Specify python to execute espnet commands.
+python=python3.7       # Specify python to execute espnet commands.
 
 # Data preparation related
 local_data_opts="" # Options to be passed to local/data.sh.
@@ -300,7 +300,7 @@ if ! "${skip_data_prep}"; then
     if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
         log "Stage 1: Data preparation for data/${train_set}, data/${valid_set}, etc."
         # [Task dependent] Need to create data.sh for new corpus
-        local/data.sh ${local_data_opts}
+#        local/data.sh ${local_data_opts}
     fi
 
 
@@ -457,9 +457,9 @@ if ! "${skip_data_prep}"; then
             fi
 
             # Remove short utterances
-            _fs=$(python3 -c "import humanfriendly as h;print(h.parse_size('${fs}'))")
-            _min_length=$(python3 -c "print(int(${min_wav_duration} * ${_fs}))")
-            _max_length=$(python3 -c "print(int(${max_wav_duration} * ${_fs}))")
+            _fs=$(python3.7 -c "import humanfriendly as h;print(h.parse_size('${fs}'))")
+            _min_length=$(python3.7 -c "print(int(${min_wav_duration} * ${_fs}))")
+            _max_length=$(python3.7 -c "print(int(${max_wav_duration} * ${_fs}))")
 
             # utt2num_samples is created by format_wav_scp.sh
             <"${data_feats}/org/${dset}/utt2num_samples" \
@@ -546,6 +546,7 @@ if ! "${skip_train}"; then
             _type=sound
         fi
         _opts+="--feats_extract ${feats_extract} "
+        #_opts+="--feats_extract_conf center=false "
         _opts+="--feats_extract_conf n_fft=${n_fft} "
         _opts+="--feats_extract_conf hop_length=${n_shift} "
         _opts+="--feats_extract_conf win_length=${win_length} "

@@ -351,15 +351,15 @@ class FastSpeech2(AbsTTS):
             self.lid_emb = torch.nn.Embedding(langs, adim)
 
         # define additional projection for speaker embedding
-        self.spk_embed_dim = None
-        if spk_embed_dim is not None and spk_embed_dim > 0:
-            self.spk_embed_dim = spk_embed_dim
-            self.spk_embed_integration_type = spk_embed_integration_type
-        if self.spk_embed_dim is not None:
-            if self.spk_embed_integration_type == "add":
-                self.projection = torch.nn.Linear(self.spk_embed_dim, adim)
-            else:
-                self.projection = torch.nn.Linear(adim + self.spk_embed_dim, adim)
+#        self.spk_embed_dim = None
+#        if spk_embed_dim is not None and spk_embed_dim > 0:
+#            self.spk_embed_dim = spk_embed_dim
+#            self.spk_embed_integration_type = spk_embed_integration_type
+#        if self.spk_embed_dim is not None:
+#            if self.spk_embed_integration_type == "add":
+#                self.projection = torch.nn.Linear(self.spk_embed_dim, adim)
+#            else:
+#                self.projection = torch.nn.Linear(adim + self.spk_embed_dim, adim)
 
         # define duration predictor
         self.duration_predictor = DurationPredictor(
@@ -527,19 +527,23 @@ class FastSpeech2(AbsTTS):
             Tensor: Weight value if not joint training else model outputs.
 
         """
+        print(f"text {text.size()} feats {feats.size()} durations {durations.size()} pitch {pitch.size()}")
         text = text[:, : text_lengths.max()]  # for data-parallel
         feats = feats[:, : feats_lengths.max()]  # for data-parallel
         durations = durations[:, : durations_lengths.max()]  # for data-parallel
         pitch = pitch[:, : pitch_lengths.max()]  # for data-parallel
         energy = energy[:, : energy_lengths.max()]  # for data-parallel
 
+        print(f"text {text.size()} feats {feats.size()} durations {durations.size()} pitch {pitch.size()}")
+
         batch_size = text.size(0)
 
         # Add eos at the last of sequence
-        xs = F.pad(text, [0, 1], "constant", self.padding_idx)
-        for i, l in enumerate(text_lengths):
-            xs[i, l] = self.eos
-        ilens = text_lengths + 1
+        xs = text
+        #xs = F.pad(text, [0, 1], "constant", self.padding_idx)
+        #for i, l in enumerate(text_lengths):
+        #    xs[i, l] = self.eos
+        ilens = text_lengths #+ 1
 
         ys, ds, ps, es = feats, durations, pitch, energy
         olens = feats_lengths
@@ -628,8 +632,9 @@ class FastSpeech2(AbsTTS):
     ) -> Sequence[torch.Tensor]:
         # forward encoder
         x_masks = self._source_mask(ilens)
+        print(xs.size())
         hs, _ = self.encoder(xs, x_masks)  # (B, T_text, adim)
-
+        print(hs.size())
         # integrate with GST
         if self.use_gst:
             style_embs = self.gst(ys)
@@ -644,8 +649,8 @@ class FastSpeech2(AbsTTS):
             hs = hs + lid_embs.unsqueeze(1)
 
         # integrate speaker embedding
-        if self.spk_embed_dim is not None:
-            hs = self._integrate_with_spk_embed(hs, spembs)
+#        if self.spk_embed_dim is not None:
+#            hs = self._integrate_with_spk_embed(hs, spembs)
 
         # forward duration predictor and variance predictors
         d_masks = make_pad_mask(ilens).to(xs.device)

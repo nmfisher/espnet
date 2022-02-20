@@ -489,9 +489,10 @@ class Tacotron2(AbsTTS):
         if self.langs is not None:
             lid_emb = self.lid_emb(lids.view(-1))
             h = h + lid_emb
-        if self.spk_embed_dim is not None:
-            hs, spembs = h.unsqueeze(0), spemb.unsqueeze(0)
-            h = self._integrate_with_spk_embed(hs, spembs)[0]
+#        if self.spk_embed_dim is not None:
+            #hs, spembs = h.unsqueeze(0), spemb.unsqueeze(0)
+            #h = self._integrate_with_spk_embed(hs, spembs)[0]
+#            h = hs
         out, prob, att_w = self.dec.inference(
             h,
             threshold=threshold,
@@ -518,15 +519,15 @@ class Tacotron2(AbsTTS):
                 integration_type is "add" else (B, Tmax, eunits + spk_embed_dim).
 
         """
-        if self.spk_embed_integration_type == "add":
-            # apply projection and then add to hidden states
-            spembs = self.projection(F.normalize(spembs))
-            hs = hs + spembs.unsqueeze(1)
-        elif self.spk_embed_integration_type == "concat":
-            # concat hidden states with spk embeds
-            spembs = F.normalize(spembs).unsqueeze(1).expand(-1, hs.size(1), -1)
-            hs = torch.cat([hs, spembs], dim=-1)
-        else:
-            raise NotImplementedError("support only add or concat.")
+        # if self.spk_embed_integration_type == "add":
+        #     # apply projection and then add to hidden states
+        #     spembs = self.projection(F.normalize(spembs))
+        #     hs = hs + spembs.unsqueeze(1)
+        # elif self.spk_embed_integration_type == "concat":
+        #     # concat hidden states with spk embeds
+        #     spembs = F.normalize(spembs).unsqueeze(1).expand(-1, hs.size(1), -1)
+        #     hs = torch.cat([hs, spembs], dim=-1)
+        # else:
+        #     raise NotImplementedError("support only add or concat.")
 
         return hs

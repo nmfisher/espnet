@@ -119,7 +119,7 @@ class Dio(AbsFeatsExtract):
             ]
             pitch_lengths = durations_lengths
         else:
-            pitch_lengths = input.new_tensor([len(p) for p in pitch], dtype=torch.long)
+           pitch_lengths = input.new_tensor([len(p) for p in pitch], dtype=torch.long)
 
         # Padding
         pitch = pad_list(pitch, 0.0)

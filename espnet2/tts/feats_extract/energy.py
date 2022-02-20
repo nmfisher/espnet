@@ -126,6 +126,7 @@ class Energy(AbsFeatsExtract):
         return energy.unsqueeze(-1), energy_lengths
 
     def _average_by_duration(self, x: torch.Tensor, d: torch.Tensor) -> torch.Tensor:
+        #print(f"{len(x)} vs {d.sum()}")
         assert 0 <= len(x) - d.sum() < self.reduction_factor
         d_cumsum = F.pad(d.cumsum(dim=0), (1, 0))
         x_avg = [
