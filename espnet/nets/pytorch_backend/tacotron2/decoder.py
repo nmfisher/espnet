@@ -337,10 +337,10 @@ class Decoder(torch.nn.Module):
         self.reduction_factor = reduction_factor
 
         # check attention type
-        if isinstance(self.att, AttForwardTA):
-            self.use_att_extra_inputs = True
-        else:
-            self.use_att_extra_inputs = False
+        # if isinstance(self.att, AttForwardTA):
+        self.use_att_extra_inputs = True
+        # else:
+            # self.use_att_extra_inputs = False
 
         # define lstm network
         prenet_units = prenet_units if prenet_layers != 0 else odim
@@ -454,7 +454,7 @@ class Decoder(torch.nn.Module):
                 prev_att_w = prev_att_w + att_w  # Note: error when use +=
             else:
                 prev_att_w = att_w
-
+        
         logits = torch.cat(logits, dim=1)  # (B, Lmax)
         before_outs = torch.cat(outs, dim=2)  # (B, odim, Lmax)
         att_ws = torch.stack(att_ws, dim=1)  # (B, Lmax, Tmax)
@@ -556,9 +556,9 @@ class Decoder(torch.nn.Module):
                     z_list[0],
                     prev_att_w,
                     prev_out,
-                    last_attended_idx=last_attended_idx,
-                    backward_window=backward_window,
-                    forward_window=forward_window,
+                    # last_attended_idx=last_attended_idx,
+                    # backward_window=backward_window,
+                    # forward_window=forward_window,
                 )
             else:
                 att_c, att_w = self.att(
@@ -566,9 +566,9 @@ class Decoder(torch.nn.Module):
                     ilens,
                     z_list[0],
                     prev_att_w,
-                    last_attended_idx=last_attended_idx,
-                    backward_window=backward_window,
-                    forward_window=forward_window,
+                    # last_attended_idx=last_attended_idx,
+                    # backward_window=backward_window,
+                    # forward_window=forward_window,
                 )
 
             att_ws += [att_w]
@@ -670,7 +670,7 @@ class Decoder(torch.nn.Module):
                 prev_att_w = prev_att_w + att_w  # Note: error when use +=
             else:
                 prev_att_w = att_w
-
+        
         att_ws = torch.stack(att_ws, dim=1)  # (B, Lmax, Tmax)
 
         return att_ws

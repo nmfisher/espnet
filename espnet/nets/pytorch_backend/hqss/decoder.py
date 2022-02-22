@@ -167,7 +167,7 @@ class Decoder(torch.nn.Module):
               ilens, 
               z_list[0], 
               phone_att_w,
-              last_attended_idx=last_attended_idx
+              #last_attended_idx=last_attended_idx
             )
            
             last_attended_idx=int(phone_att_w.argmax())

@@ -1,6 +1,7 @@
 from pynini import escape
 import six
 
+import math
 import torch
 import torch.nn.functional as F
 import numpy as np 
@@ -24,12 +25,12 @@ class MOLAttn(torch.nn.Module):
     """
 
     def __init__(
-        self, enc_dim, dec_dim, adim, num_dists=1, frames_per_step=5
+        self, enc_dim, dec_dim, adim, num_dists=5
     ):
         super(MOLAttn, self).__init__()
         self.enc_dim = enc_dim
         self.adim = adim
-        self.rnn = torch.nn.GRU(adim + enc_dim, adim, batch_first=True)
+        self.rnn = torch.nn.GRU(1024, int(adim/2), batch_first=True)
         
         self.num_dists = num_dists
         
@@ -38,25 +39,33 @@ class MOLAttn(torch.nn.Module):
         # accepts hidden state of B x S x HS
         # outputs B x S x 
         self.param_net = torch.nn.Sequential(
-                torch.nn.Linear(adim, adim), 
+                torch.nn.Linear(int(adim/2), 128), 
                 torch.nn.Tanh(),
-                torch.nn.Linear(adim, self.num_dists * 3)
+                torch.nn.Linear(128, self.num_dists * 3)
             ) 
+
+        self.iteration = 0
 
         attn_init(self)
 
     
     def reset(self):
         """reset states"""
-        self.means = []
-        self.enc_i = None
+        self.means = None
+        self.enc_i_pos = None
+        self.rnn_h = None
+        self.iteration+=1 
+        self.decoding_step = 0 
    
     def forward(
         self,
         enc_z,
+        enc_z_lens,
         rnn_c,
-        rnn_h,
-        last_out
+        # rnn_h,
+        #last_out
+        prev_att_w,
+        prev_c
     ):
         """Calculate AttLoc forward propagation.
         :param torch.Tensor enc_z: encoder hidden states
@@ -67,67 +76,113 @@ class MOLAttn(torch.nn.Module):
         batch = len(enc_z)
         device = enc_z.device
 
-        if rnn_c is None:
-          rnn_c = enc_z.new_zeros(
-            enc_z.size(0), 
-            1,
-            #self.enc_dim + self.adim
-            276
+        if self.enc_i_pos is None:
+          # rnn_c = torch.zeros(rnn_c.size(0), self.adim).to(device)
+          isteps = enc_z.size(1)
+          irange = torch.tensor(
+            [
+              np.arange(
+                isteps
+              )
+            ]
           )
-          self.enc_i_pos = torch.FloatTensor(np.arange(enc_z.size(1))).unsqueeze(0).expand(enc_z.size(0), enc_z.size(1)).to(device) + 0.5
-          self.enc_i_neg = torch.FloatTensor(np.arange(enc_z.size(1))).unsqueeze(0).expand(enc_z.size(0), enc_z.size(1)).to(device) - 0.5
-        else:
-          rnn_c = torch.cat([rnn_c, last_out], dim=1).unsqueeze(1)
-          assert rnn_h is not None
-        
-        rnn_c, rnn_h = self.rnn(
-           rnn_c,rnn_h
+          irange = irange.unsqueeze(-1).expand(
+              batch,
+              isteps,
+              self.num_dists
+            ).to(device)
+          
+          self.enc_i_pos = irange + 0.5
+          self.enc_i_neg = irange - 0.5
+          
+          self.pad_mask = make_pad_mask(enc_z_lens)
+
+        # rnn_c = torch.cat([rnn_c, prev_c], dim=1).unsqueeze(1)
+        rnn_c = rnn_c.unsqueeze(1)
+
+        rnn_c, self.rnn_h = self.rnn(
+           rnn_c,self.rnn_h
         )        
 
         params = self.param_net(rnn_c)
-        
-        rnn_w = []
-        self.means += [[]]
-        weights = []
-        f1 = []
-        f2 = []
-        for k in range(self.num_dists):
 
-          if len(self.means) > 1:
-            mean = torch.exp(params[:,:,k*3])  + self.means[-2][k]
-          else:
-            mean = torch.exp(params[:,:,k*3])
-          self.means[-1] += [ mean ]
+        means = F.sigmoid(
+            params[:,:,0:self.num_dists]
+        ) / 5
 
-          scale = torch.exp(params[:,:,(k*3)+1])
-          
-          weights += [ params[:,:,(k*3)+2] ]
-          
-          s1 = F.sigmoid((self.enc_i_pos - mean) / scale).unsqueeze(1)
-          
-          f1 += [ s1 ] 
-          
-          f2 += [ F.sigmoid((self.enc_i_neg - mean) / scale).unsqueeze(1) ]
-       
-        f1 = torch.cat(f1, 1)
-        
-        f2 = torch.cat(f2, 1)
+        if self.means is not None:
+          means = means + self.means
 
-        weights = torch.cat(weights, 1)
+        self.means = torch.clamp(
+          means,
+          min=0, max=enc_z.size(1)
+        )
         
-        weights = F.softmax(weights, 1).unsqueeze(-1)
+        scales = params[:,:,self.num_dists:self.num_dists*2]
+        # scales[scales < -7] = -7
+        scales = torch.exp(scales)
+          
+        weights = F.softmax(
+          params[:,:,self.num_dists*2:]
+          , -1)
+
+        # print(f"means {means.size()} encipos {self.enc_i_pos.size()} scales {scales.size()} weights {weights.size()}  self.enc_i_pos{self.enc_i_pos.size()}")
+        # print(self.enc_i_pos)
+
+        means = self.means.expand(self.enc_i_pos.size())
+        scales = scales.expand(self.enc_i_pos.size())
+        weights = weights.expand(self.enc_i_pos.size())
         
-        weights = weights.expand(batch, weights.size(1), f1.size(2))
-        
-        rnn_w = (weights * (f1 - f2))
+        f1 = F.sigmoid((self.enc_i_pos - means) / scales)
+
+        f2 = F.sigmoid((self.enc_i_neg - means) / scales)
+
+        f = f1 - f2
                 
-        rnn_w = rnn_w.sum(1).unsqueeze(-1)
+        rnn_w = (weights * f)
         
-        rnn_c = torch.sum(
+        rnn_w = rnn_w.sum(2).unsqueeze(-1)
+
+        if self.iteration % 10 == 0:
+          print(f"decoding step {self.decoding_step} enc_z {enc_z.size()} m {means[0,0]} s {scales[0,0]} w {weights[0,0]} f {f[0,0]} rnn_w {rnn_w[0][0]}")
+
+        rnn_w += 1e-7
+        rnn_w[self.pad_mask] = 0
+        # rnn_w[self.pad_mask] = -math.inf
+        # rnn_w = F.softmax(rnn_w, 1)
+
+        self.decoding_step += 1
+
+        # if self.iteration % 25 == 0:
+          # print(f"m {means[0,0]} s {scales[0,0]} w {weights[0,0]} f {f[0,0]} rnn_w {rnn_w[0]}")
+          # print(rnn_w[0])
+          # print(rnn_w[1])
+        # prod = rnn_w * enc_z
+        # print(f"w {rnn_w.size()} e {enc_z.size()} p {prod.size()} {rnn_w}")
+        
+        
+        # print(torch.sum(
+        #   prod,
+        #   dim=1
+        # ).size())
+
+        # raise Exception()
+
+        return torch.sum(
           rnn_w * enc_z, 
           dim=1
-        ).to(device)
+        ).to(device),  \
+        rnn_w.squeeze(-1) #, rnn_h  
+        
+        
 
-        return rnn_c, rnn_w.squeeze(-1), rnn_h  
-        
-        
+
+          # print(f"mean {mean.size()} encipos {self.enc_i_pos.size()} scale {scale.size()} f1 {f1.size()}")
+          # print(f"mean {mean.size()} encipos {self.enc_i_pos.size()} scale {scale.size()} f1 {f1.size()}")
+
+                  #print(f" means {len(self.means)} {self.means[-1][0][0]}")
+        #print(f" weights {weights.size()} {weights}")
+        #print(f" f {f.size()} {f}")
+        # print(weights.size())       
+        # print(f.size())
+                  # print(f"f1 {f1.size()} f2 {f2.size()}")

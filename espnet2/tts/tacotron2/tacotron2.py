@@ -26,7 +26,7 @@ from espnet.nets.pytorch_backend.tacotron2.encoder import Encoder
 from espnet2.torch_utils.device_funcs import force_gatherable
 from espnet2.tts.abs_tts import AbsTTS
 from espnet2.tts.gst.style_encoder import StyleEncoder
-
+from espnet.nets.pytorch_backend.hqss.mol_attn import MOLAttn
 
 class Tacotron2(AbsTTS):
     """Tacotron2 module for end-to-end text-to-speech.
@@ -92,6 +92,11 @@ class Tacotron2(AbsTTS):
         use_guided_attn_loss: bool = True,
         guided_attn_loss_sigma: float = 0.4,
         guided_attn_loss_lambda: float = 1.0,
+        num_speakers : int = 0,
+        num_prosody_clusters : int = 0,
+        spkr_embed_dim : int = 0,
+        phone_embed_dim : int = 0,
+        prosody_embed_dim : int = 0
     ):
         """Initialize Tacotron2 module.
 
@@ -227,27 +232,27 @@ class Tacotron2(AbsTTS):
             self.projection = torch.nn.Linear(self.spk_embed_dim, eunits)
         else:
             raise ValueError(f"{spk_embed_integration_type} is not supported.")
-
-        if atype == "location":
-            att = AttLoc(dec_idim, dunits, adim, aconv_chans, aconv_filts)
-        elif atype == "forward":
-            att = AttForward(dec_idim, dunits, adim, aconv_chans, aconv_filts)
-            if self.cumulate_att_w:
-                logging.warning(
-                    "cumulation of attention weights is disabled "
-                    "in forward attention."
-                )
-                self.cumulate_att_w = False
-        elif atype == "forward_ta":
-            att = AttForwardTA(dec_idim, dunits, adim, aconv_chans, aconv_filts, odim)
-            if self.cumulate_att_w:
-                logging.warning(
-                    "cumulation of attention weights is disabled "
-                    "in forward attention."
-                )
-                self.cumulate_att_w = False
-        else:
-            raise NotImplementedError("Support only location or forward")
+        att = MOLAttn(dec_idim, dunits, adim)
+        # if atype == "location":
+        #     att = AttLoc(dec_idim, dunits, adim, aconv_chans, aconv_filts)
+        # elif atype == "forward":
+        #     att = AttForward(dec_idim, dunits, adim, aconv_chans, aconv_filts)
+        #     if self.cumulate_att_w:
+        #         logging.warning(
+        #             "cumulation of attention weights is disabled "
+        #             "in forward attention."
+        #         )
+        #         self.cumulate_att_w = False
+        # elif atype == "forward_ta":
+        #     att = AttForwardTA(dec_idim, dunits, adim, aconv_chans, aconv_filts, odim)
+        #     if self.cumulate_att_w:
+        #         logging.warning(
+        #             "cumulation of attention weights is disabled "
+        #             "in forward attention."
+        #         )
+        #         self.cumulate_att_w = False
+        # else:
+        #     raise NotImplementedError("Support only location or forward")
         self.dec = Decoder(
             idim=dec_idim,
             odim=odim,
@@ -284,6 +289,10 @@ class Tacotron2(AbsTTS):
         text_lengths: torch.Tensor,
         feats: torch.Tensor,
         feats_lengths: torch.Tensor,
+        durations:torch.Tensor,
+        durations_lengths:torch.Tensor,
+        pitch:torch.Tensor,
+        pitch_lengths:torch.Tensor,
         spembs: Optional[torch.Tensor] = None,
         sids: Optional[torch.Tensor] = None,
         lids: Optional[torch.Tensor] = None,
@@ -417,6 +426,9 @@ class Tacotron2(AbsTTS):
         self,
         text: torch.Tensor,
         feats: Optional[torch.Tensor] = None,
+        durations: Optional[torch.Tensor] = None,
+        durations_lengths: Optional[torch.Tensor] = None,
+        pitch: Optional[torch.Tensor] = None,
         spembs: Optional[torch.Tensor] = None,
         sids: Optional[torch.Tensor] = None,
         lids: Optional[torch.Tensor] = None,
@@ -452,7 +464,8 @@ class Tacotron2(AbsTTS):
 
         """
         x = text
-        y = feats
+        y = feats.view(-1, self.odim)
+        
         spemb = spembs
 
         # add eos at the last of sequence
@@ -489,9 +502,9 @@ class Tacotron2(AbsTTS):
         if self.langs is not None:
             lid_emb = self.lid_emb(lids.view(-1))
             h = h + lid_emb
-        if self.spk_embed_dim is not None:
-            hs, spembs = h.unsqueeze(0), spemb.unsqueeze(0)
-            h = self._integrate_with_spk_embed(hs, spembs)[0]
+        #if self.spk_embed_dim is not None:
+        #    hs, spembs = h.unsqueeze(0), spemb.unsqueeze(0)
+        #    h = self._integrate_with_spk_embed(hs, spembs)[0]
         out, prob, att_w = self.dec.inference(
             h,
             threshold=threshold,
@@ -520,8 +533,8 @@ class Tacotron2(AbsTTS):
         """
         if self.spk_embed_integration_type == "add":
             # apply projection and then add to hidden states
-            spembs = self.projection(F.normalize(spembs))
-            hs = hs + spembs.unsqueeze(1)
+            # spembs = self.projection(F.normalize(spembs))
+            hs = hs #  + spembs.unsqueeze(1)
         elif self.spk_embed_integration_type == "concat":
             # concat hidden states with spk embeds
             spembs = F.normalize(spembs).unsqueeze(1).expand(-1, hs.size(1), -1)

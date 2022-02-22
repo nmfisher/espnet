@@ -46,10 +46,10 @@ grad_clip: 1              # gradient clipping norm
 grad_noise: false           # whether to use gradient noise injection
 accum_grad: 1               # gradient accumulation
 # batch_bins: 1600000       # batch bins (for feats_type=fbank)
-#batch_bins: 128000         # batch bins (for feats_type=raw, *= n_shift / n_mels)
-batch_size: 1
-batch_type: unsorted
-#batch_type: numel           # how to make batch
+batch_bins: 128000         # batch bins (for feats_type=raw, *= n_shift / n_mels)
+#batch_size: 1
+#batch_type: unsorted
+batch_type: numel           # how to make batch
 allow_variable_data_keys: true
 sort_in_batch: descending   # how to sort data in making batch
 sort_batch: descending      # how to sort created batches
