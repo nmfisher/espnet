@@ -78,9 +78,14 @@ def write_clusters(filepath, durations, transcripts, clusters, num_clusters):
 
 def _open(path):
   with open(path, "r") as infile:
-    for line in infile.readlines():
-      split = line.strip().split(" ")
-      yield (split[0], split[1:])
+    try:
+        ln=0
+        for line in infile.readlines():
+          split = line.strip().split(" ")
+          yield (split[0], split[1:])
+          ln += 1
+    except:
+        raise Exception(f"Error parsing line {ln} in file {path}")
 
 def main():
     parser = get_parser()
