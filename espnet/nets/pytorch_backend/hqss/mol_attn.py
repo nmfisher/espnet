@@ -25,12 +25,12 @@ class MOLAttn(torch.nn.Module):
     """
 
     def __init__(
-        self, enc_dim, dec_dim, adim, num_dists=5
+        self, enc_dim, adim, num_dists=5
     ):
         super(MOLAttn, self).__init__()
         self.enc_dim = enc_dim
         self.adim = adim
-        self.rnn = torch.nn.GRU(1024, int(adim/2), batch_first=True)
+        self.rnn = torch.nn.GRU(enc_dim, adim, batch_first=True)
         
         self.num_dists = num_dists
         
@@ -39,7 +39,7 @@ class MOLAttn(torch.nn.Module):
         # accepts hidden state of B x S x HS
         # outputs B x S x 
         self.param_net = torch.nn.Sequential(
-                torch.nn.Linear(int(adim/2), 128), 
+                torch.nn.Linear(adim, 128), 
                 torch.nn.Tanh(),
                 torch.nn.Linear(128, self.num_dists * 3)
             ) 

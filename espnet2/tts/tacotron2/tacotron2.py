@@ -94,8 +94,6 @@ class Tacotron2(AbsTTS):
         guided_attn_loss_lambda: float = 1.0,
         num_speakers : int = 0,
         num_prosody_clusters : int = 0,
-        spkr_embed_dim : int = 0,
-        phone_embed_dim : int = 0,
         prosody_embed_dim : int = 0
     ):
         """Initialize Tacotron2 module.
@@ -196,20 +194,6 @@ class Tacotron2(AbsTTS):
             padding_idx=padding_idx,
         )
 
-        if self.use_gst:
-            self.gst = StyleEncoder(
-                idim=odim,  # the input is mel-spectrogram
-                gst_tokens=gst_tokens,
-                gst_token_dim=eunits,
-                gst_heads=gst_heads,
-                conv_layers=gst_conv_layers,
-                conv_chans_list=gst_conv_chans_list,
-                conv_kernel_size=gst_conv_kernel_size,
-                conv_stride=gst_conv_stride,
-                gru_layers=gst_gru_layers,
-                gru_units=gst_gru_units,
-            )
-
         self.spks = None
         if spks is not None and spks > 1:
             self.spks = spks
@@ -232,7 +216,7 @@ class Tacotron2(AbsTTS):
             self.projection = torch.nn.Linear(self.spk_embed_dim, eunits)
         else:
             raise ValueError(f"{spk_embed_integration_type} is not supported.")
-        att = MOLAttn(dec_idim, dunits, adim)
+        att = MOLAttn(dunits, adim)
         # if atype == "location":
         #     att = AttLoc(dec_idim, dunits, adim, aconv_chans, aconv_filts)
         # elif atype == "forward":
@@ -464,48 +448,17 @@ class Tacotron2(AbsTTS):
 
         """
         x = text
-        y = feats.view(-1, self.odim)
-        
-        spemb = spembs
-
         # add eos at the last of sequence
         x = F.pad(x, [0, 1], "constant", self.eos)
 
-        # inference with teacher forcing
-        if use_teacher_forcing:
-            assert feats is not None, "feats must be provided with teacher forcing."
-
-            xs, ys = x.unsqueeze(0), y.unsqueeze(0)
-            spembs = None if spemb is None else spemb.unsqueeze(0)
-            ilens = x.new_tensor([xs.size(1)]).long()
-            olens = y.new_tensor([ys.size(1)]).long()
-            outs, _, _, att_ws = self._forward(
-                xs=xs,
-                ilens=ilens,
-                ys=ys,
-                olens=olens,
-                spembs=spembs,
-                sids=sids,
-                lids=lids,
-            )
-
-            return dict(feat_gen=outs[0], att_w=att_ws[0])
-
         # inference
         h = self.enc.inference(x)
-        if self.use_gst:
-            style_emb = self.gst(y.unsqueeze(0))
-            h = h + style_emb
+        
         if self.spks is not None:
             sid_emb = self.sid_emb(sids.view(-1))
             h = h + sid_emb
-        if self.langs is not None:
-            lid_emb = self.lid_emb(lids.view(-1))
-            h = h + lid_emb
-        #if self.spk_embed_dim is not None:
-        #    hs, spembs = h.unsqueeze(0), spemb.unsqueeze(0)
-        #    h = self._integrate_with_spk_embed(hs, spembs)[0]
-        out, prob, att_w = self.dec.inference(
+        
+        out, att_w = self.dec.inference(
             h,
             threshold=threshold,
             minlenratio=minlenratio,
@@ -515,7 +468,7 @@ class Tacotron2(AbsTTS):
             forward_window=forward_window,
         )
 
-        return dict(feat_gen=out, prob=prob, att_w=att_w)
+        return dict(feat_gen=out, att_w=att_w)
 
     def _integrate_with_spk_embed(
         self, hs: torch.Tensor, spembs: torch.Tensor

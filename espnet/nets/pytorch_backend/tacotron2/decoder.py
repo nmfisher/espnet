@@ -613,7 +613,7 @@ class Decoder(torch.nn.Module):
         if self.output_activation_fn is not None:
             outs = self.output_activation_fn(outs)
 
-        return outs, probs, att_ws
+        return outs,  att_ws
 
     def calculate_all_attentions(self, hs, hlens, ys):
         """Calculate all of the attention weights.
