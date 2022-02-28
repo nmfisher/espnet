@@ -58,7 +58,7 @@ class ZoneOutCell(torch.nn.Module):
                 "zoneout probability must be in the range from 0.0 to 1.0."
             )
 
-    def forward(self, inputs, hidden):
+    def forward(self, inputs, hidden : Tuple[torch.Tensor,torch.Tensor]):
         """Calculate forward propagation.
 
         Args:
@@ -74,21 +74,15 @@ class ZoneOutCell(torch.nn.Module):
 
         """
         next_hidden = self.cell(inputs, hidden)
-        next_hidden = self._zoneout(hidden, next_hidden, self.zoneout_rate)
+        next_hidden = (
+          self._zoneout(hidden[0], next_hidden[0], self.zoneout_rate),
+          self._zoneout(hidden[1], next_hidden[1], self.zoneout_rate) 
+        )
         return next_hidden
 
-    def _zoneout(self, h, next_h, prob):
-        # apply recursively
-        if isinstance(h, tuple):
-            num_h = len(h)
-            if not isinstance(prob, tuple):
-                prob = tuple([prob] * num_h)
-            return tuple(
-                [self._zoneout(h[i], next_h[i], prob[i]) for i in range(num_h)]
-            )
-
+    def _zoneout(self, h, next_h, prob : float):
         if self.training:
-            mask = h.new(*h.size()).bernoulli_(prob)
+            mask = torch.zeros(h.size()).bernoulli_(prob).to(h.device)
             return mask * h + (1 - mask) * next_h
         else:
             return prob * h + (1 - prob) * next_h
@@ -143,8 +137,8 @@ class Prenet(torch.nn.Module):
             Tensor: Batch of output tensors (B, ..., odim).
 
         """
-        for i in six.moves.range(len(self.prenet)):
-            x = F.dropout(self.prenet[i](x), self.dropout_rate)
+        for layer in self.prenet:
+            x = F.dropout(layer(x), self.dropout_rate)
         return x
 
 
@@ -262,8 +256,8 @@ class Postnet(torch.nn.Module):
             Tensor: Batch of padded output tensor. (B, odim, Tmax).
 
         """
-        for i in six.moves.range(len(self.postnet)):
-            xs = self.postnet[i](xs)
+        for layer in self.postnet:
+            xs = layer(xs)
         return xs
 
 
@@ -390,7 +384,7 @@ class Decoder(torch.nn.Module):
         init_hs = hs.new_zeros(hs.size(0), self.lstm[0].hidden_size)
         return init_hs
 
-    def forward(self, hs, hlens, ys):
+    def forward(self, hs, hlens : torch.Tensor, ys):
         """Calculate forward propagation.
 
         Args:
@@ -413,19 +407,16 @@ class Decoder(torch.nn.Module):
         if self.reduction_factor > 1:
             ys = ys[:, self.reduction_factor - 1 :: self.reduction_factor]
 
-        # length list should be list of int
-        hlens = list(map(int, hlens))
-
         # initialize hidden states of decoder
         c_list = [self._zero_state(hs)]
         z_list = [self._zero_state(hs)]
-        for _ in six.moves.range(1, len(self.lstm)):
-            c_list += [self._zero_state(hs)]
-            z_list += [self._zero_state(hs)]
+        for _ in self.lstm[1:]:
+            c_list += [self._zero_state(hs).to(hs.device)]
+            z_list += [self._zero_state(hs).to(hs.device)]
         prev_out = hs.new_zeros(hs.size(0), self.odim)
 
         # initialize attention
-        prev_att_w = None
+        prev_att_w : Optional [ torch.Tensor ] = None
         self.att.reset()
 
         # loop for an output sequence
@@ -437,9 +428,12 @@ class Decoder(torch.nn.Module):
                 att_c, att_w = self.att(hs, hlens, z_list[0], prev_att_w)
             prenet_out = self.prenet(prev_out) if self.prenet is not None else prev_out
             xs = torch.cat([att_c, prenet_out], dim=1)
-            z_list[0], c_list[0] = self.lstm[0](xs, (z_list[0], c_list[0]))
-            for i in six.moves.range(1, len(self.lstm)):
-                z_list[i], c_list[i] = self.lstm[i](
+
+            for i, layer in enumerate(self.lstm): 
+              if i == 0:
+                z_list[0], c_list[0] = layer(xs, (z_list[0], c_list[0]))
+              else:
+                z_list[i], c_list[i] = layer(
                     z_list[i - 1], (z_list[i], c_list[i])
                 )
             zcs = (
@@ -527,6 +521,7 @@ class Decoder(torch.nn.Module):
         # initialize hidden states of decoder
         c_list = torch.zeros(len(self.lstm), hs.size(0), self.lstm[0].hidden_size)
         z_list = torch.zeros(len(self.lstm), hs.size(0), self.lstm[0].hidden_size)
+
         prev_out = hs.new_zeros(1, self.odim)
 
         # initialize attention
@@ -580,16 +575,17 @@ class Decoder(torch.nn.Module):
                 z_list[0], c_list[0] = layer(xs, (z_list[0], c_list[0]))
               else:
                 z_list[i], c_list[i] = layer(
-                   z_list[i - 1], (z_list[i], c_list[i])
+                    z_list[i - 1], (z_list[i], c_list[i])
                 )
-
             zcs = (
                 torch.cat([z_list[-1], att_c], dim=1)
                 if self.use_concate
                 else z_list[-1]
             )
             outs += [self.feat_out(zcs).view(1, self.odim, -1)]  # [(1, odim, r), ...]
+            
             stop_prob = torch.sigmoid(self.prob_out(zcs))[0].item()
+            
             if self.output_activation_fn is not None:
                 prev_out = self.output_activation_fn(outs[-1][:, :, -1])  # (1, odim)
             else:
@@ -605,9 +601,8 @@ class Decoder(torch.nn.Module):
         if self.postnet is not None:
           outs_t = outs_t + self.postnet(outs_t)  
         outs_t = outs_t.transpose(2, 1)  
-      
-        if self.output_activation_fn is not None:
-            outs = self.output_activation_fn(outs)
+
+        print(outs_t.size())
 
         att_ws_t = torch.cat(att_ws, dim=0)
         if self.output_activation_fn is not None:
