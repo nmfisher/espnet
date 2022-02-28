@@ -13,6 +13,7 @@ import torch.nn.functional as F
 
 from espnet.nets.pytorch_backend.rnn.attentions import AttForwardTA
 
+from typing import Optional, Tuple, List
 
 def decoder_init(m):
     """Initialize decoder parameters."""
@@ -482,12 +483,12 @@ class Decoder(torch.nn.Module):
     def inference(
         self,
         h,
-        threshold=0.5,
-        minlenratio=0.0,
-        maxlenratio=10.0,
-        use_att_constraint=False,
-        backward_window=None,
-        forward_window=None,
+        threshold : float =0.5,
+        minlenratio: float = 10,
+        maxlenratio: float = 10.0,
+        use_att_constraint : bool =False,
+        backward_window: Optional[int]=None,
+        forward_window: Optional[int]=None,
     ):
         """Generate the sequence of features given the sequences of characters.
 
@@ -519,20 +520,17 @@ class Decoder(torch.nn.Module):
         # setup
         assert len(h.size()) == 2
         hs = h.unsqueeze(0)
-        ilens = [h.size(0)]
+        ilens = torch.tensor([h.size(0)])
         maxlen = int(h.size(0) * maxlenratio)
         minlen = int(h.size(0) * minlenratio)
 
         # initialize hidden states of decoder
-        c_list = [self._zero_state(hs)]
-        z_list = [self._zero_state(hs)]
-        for _ in six.moves.range(1, len(self.lstm)):
-            c_list += [self._zero_state(hs)]
-            z_list += [self._zero_state(hs)]
+        c_list = torch.zeros(len(self.lstm), hs.size(0), self.lstm[0].hidden_size)
+        z_list = torch.zeros(len(self.lstm), hs.size(0), self.lstm[0].hidden_size)
         prev_out = hs.new_zeros(1, self.odim)
 
         # initialize attention
-        prev_att_w = None
+        prev_att_w : Optional [ torch.Tensor ]= None
         self.att.reset()
 
         # setup for attention constraint
@@ -543,8 +541,11 @@ class Decoder(torch.nn.Module):
 
         # loop for an output sequence
         idx = 0
-        outs, att_ws, probs = [], [], []
-        while True:
+        stop_prob = 0.0
+        outs : list[torch.Tensor] = []
+        att_ws : list[torch.Tensor] = []
+
+        while idx < minlen or (stop_prob < 0.5 and idx < maxlen):
             # updated index
             idx += self.reduction_factor
 
@@ -574,18 +575,21 @@ class Decoder(torch.nn.Module):
             att_ws += [att_w]
             prenet_out = self.prenet(prev_out) if self.prenet is not None else prev_out
             xs = torch.cat([att_c, prenet_out], dim=1)
-            z_list[0], c_list[0] = self.lstm[0](xs, (z_list[0], c_list[0]))
-            for i in six.moves.range(1, len(self.lstm)):
-                z_list[i], c_list[i] = self.lstm[i](
-                    z_list[i - 1], (z_list[i], c_list[i])
+            for i, layer in enumerate(self.lstm):
+              if i == 0:
+                z_list[0], c_list[0] = layer(xs, (z_list[0], c_list[0]))
+              else:
+                z_list[i], c_list[i] = layer(
+                   z_list[i - 1], (z_list[i], c_list[i])
                 )
+
             zcs = (
                 torch.cat([z_list[-1], att_c], dim=1)
                 if self.use_concate
                 else z_list[-1]
             )
             outs += [self.feat_out(zcs).view(1, self.odim, -1)]  # [(1, odim, r), ...]
-            probs += [torch.sigmoid(self.prob_out(zcs))[0]]  # [(r), ...]
+            stop_prob = torch.sigmoid(self.prob_out(zcs))[0].item()
             if self.output_activation_fn is not None:
                 prev_out = self.output_activation_fn(outs[-1][:, :, -1])  # (1, odim)
             else:
@@ -596,24 +600,20 @@ class Decoder(torch.nn.Module):
                 prev_att_w = att_w
             if use_att_constraint:
                 last_attended_idx = int(att_w.argmax())
+        outs_t = torch.cat(outs, dim=0)  
 
-            # check whether to finish generation
-            if int(sum(probs[-1] >= threshold)) > 0 or idx >= maxlen:
-                # check mininum length
-                if idx < minlen:
-                    continue
-                outs = torch.cat(outs, dim=2)  # (1, odim, L)
-                if self.postnet is not None:
-                    outs = outs + self.postnet(outs)  # (1, odim, L)
-                outs = outs.transpose(2, 1).squeeze(0)  # (L, odim)
-                probs = torch.cat(probs, dim=0)
-                att_ws = torch.cat(att_ws, dim=0)
-                break
-
+        if self.postnet is not None:
+          outs_t = outs_t + self.postnet(outs_t)  
+        outs_t = outs_t.transpose(2, 1)  
+      
         if self.output_activation_fn is not None:
             outs = self.output_activation_fn(outs)
 
-        return outs,  att_ws
+        att_ws_t = torch.cat(att_ws, dim=0)
+        if self.output_activation_fn is not None:
+            outs_t = self.output_activation_fn(outs)
+        
+        return outs_t.squeeze(0), att_ws_t
 
     def calculate_all_attentions(self, hs, hlens, ys):
         """Calculate all of the attention weights.
