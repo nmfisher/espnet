@@ -409,7 +409,6 @@ class Tacotron2(AbsTTS):
     def inference(
         self,
         text: torch.Tensor,
-        feats: Optional[torch.Tensor] = None,
         durations: Optional[torch.Tensor] = None,
         durations_lengths: Optional[torch.Tensor] = None,
         pitch: Optional[torch.Tensor] = None,
@@ -423,6 +422,7 @@ class Tacotron2(AbsTTS):
         backward_window: int = 1,
         forward_window: int = 3,
         use_teacher_forcing: bool = False,
+        feats: Optional[torch.Tensor] = None,
     ) -> Dict[str, torch.Tensor]:
         """Generate the sequence of features given the sequences of characters.
 
@@ -447,9 +447,42 @@ class Tacotron2(AbsTTS):
                 * att_w (Tensor): Attention weights (T_feats, T).
 
         """
+        out, att_w = self._inference(text,
+        durations,
+        pitch,
+        sids,
+        # lids: Optional[torch.Tensor] = None,
+        # spembs: Optional[torch.Tensor] = None,
+        use_teacher_forcing,
+        threshold=threshold,
+        minlenratio=5,
+        maxlenratio = 20,
+        use_att_constraint = False,
+        backward_window=backward_window,
+        forward_window=forward_window,
+        feats=feats )
+        return dict(feat_gen=out, att_w=att_w)
+
+    def _inference(self,
+        text: torch.Tensor,
+        durations: torch.Tensor,
+        pitch: torch.Tensor,
+        sids: torch.Tensor,
+        # lids: Optional[torch.Tensor] = None,
+        # spembs: Optional[torch.Tensor] = None,
+        use_teacher_forcing : bool = False,
+        threshold: float = 0.5,
+        minlenratio: float = 1.0,
+        maxlenratio: float = 10.0,
+        use_att_constraint: bool = False,
+        backward_window: int = 1,
+        forward_window: int = 3,
+        feats: Optional [ torch.Tensor ] = None
+    ):
         x = text
         # add eos at the last of sequence
-        x = F.pad(x, [0, 1], "constant", self.eos)
+        x = F.pad(x, [0, 1], "constant", float(self.eos))
+
 
         # inference
         h = self.enc.inference(x)
@@ -468,8 +501,17 @@ class Tacotron2(AbsTTS):
             forward_window=forward_window,
         )
 
-        return dict(feat_gen=out, att_w=att_w)
+        return out, att_w
 
+    def export(
+        self,
+        text: torch.Tensor,
+        durations: torch.Tensor,
+        pitch: torch.Tensor,
+        sids: torch.Tensor,
+    ) -> Tuple[torch.Tensor,torch.Tensor]:
+      return self._inference(text, durations, pitch,sids)
+      
     def _integrate_with_spk_embed(
         self, hs: torch.Tensor, spembs: torch.Tensor
     ) -> torch.Tensor:
