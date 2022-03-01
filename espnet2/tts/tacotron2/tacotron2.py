@@ -500,7 +500,6 @@ class Tacotron2(AbsTTS):
             backward_window=backward_window,
             forward_window=forward_window,
         )
-
         return out, att_w
 
     def export(

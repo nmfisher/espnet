@@ -63,14 +63,14 @@ if __name__ == "__main__":
         # pitch: Optional[torch.Tensor] = None,
         # sids: Optional[torch.Tensor] = None,
         inputs = (
-            torch.zeros(10,dtype=torch.int).to(device), 
-            torch.zeros(10,dtype=torch.int).to(device),
-            torch.zeros(10,dtype=torch.int).to(device),
-            torch.zeros(1,dtype=torch.long).to(device),
+            torch.zeros(1,10,dtype=torch.int).to(device), 
+            torch.zeros(1,10,dtype=torch.int).to(device),
+            torch.zeros(1,10,dtype=torch.int).to(device),
+            torch.zeros(1,1,dtype=torch.long).to(device),
         )
 
         # plain method invocation to confirm that everything works correctly outside torch.jit.script
-        model.forward = model.inference
+        model.forward = model.export
 
         model.forward(*inputs)
         
@@ -95,22 +95,22 @@ if __name__ == "__main__":
             output_names=['pcm','att_ws'],
             dynamic_axes={
                 'phones': {
-                    0: 'length'
+                    1: 'length'
                 },
                 'durations': {
-                    0: 'length'
+                    1: 'length'
                 },
                 'pitch': {
-                    0: 'length'
+                    1: 'length'
                 },
                 'pcm': {
-                    0: 'olen', 
+                    1: 'olen', 
                     # 1: 'ilen'
                     # 1: 'length' 
                 },
                 'att_ws': {
-                    0: 'olen',
-                    1: 'ilen'
+                    1: 'olen',
+                    2: 'ilen'
                 }
             }
         )

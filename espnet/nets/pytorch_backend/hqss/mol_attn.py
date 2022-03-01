@@ -46,37 +46,35 @@ class MOLAttn(torch.nn.Module):
                 torch.nn.Linear(128, self.num_dists * 3)
             ) 
 
-        self.iteration = 0
-
         MAX_ISTEPS = 200
 
         self.isteps = torch.tensor(
-            [
               list(range(
                 MAX_ISTEPS
               ))
-            ]
-          ).unsqueeze(1)
+          ).unsqueeze(0).unsqueeze(2)
 
         self.enc_i_pos : Optional [ torch.Tensor ] = None
         self.enc_i_neg : Optional [ torch.Tensor ] = None
         self.pad_mask : Optional [ torch.Tensor ] = None
         self.means : Optional [ torch.Tensor ] = None
         self.rnn_h : Optional [ torch.Tensor ] = None
-        self.reset()
 
         attn_init(self)
 
     
-    def reset(self):
+    def reset(self, encs):
         """reset states"""
-        self.iteration += 1 
-        self.means =  torch.zeros(0, dtype=torch.float32)
-        self.enc_i_pos : Optional [ torch.Tensor ] = torch.zeros(0, dtype=torch.float32)
-        self.enc_i_neg : Optional [ torch.Tensor ] = torch.zeros(0, dtype=torch.float32)
-        self.pad_mask : Optional [ torch.Tensor ] = torch.ones(0, dtype=torch.bool)
-        self.rnn_h : Optional [ torch.Tensor ] = torch.zeros(0, dtype=torch.float32)
-        self.iteration+=1 
+        # self.means =  torch.zeros(1, dtype=torch.float32)
+        # self.enc_i_pos : Optional [ torch.Tensor ] = torch.zeros(1,1,1, dtype=torch.float32)
+        # self.enc_i_neg : Optional [ torch.Tensor ] = torch.zeros(1,1,1, dtype=torch.float32)
+        # self.pad_mask : Optional [ torch.Tensor ] = torch.ones(1,1, dtype=torch.bool)
+        # self.rnn_h : Optional [ torch.Tensor ] = torch.zeros(1,1,1, dtype=torch.float32)
+        self.enc_i_pos : Optional [ torch.Tensor ] = torch.zeros(encs.size(), dtype=torch.float32)
+        self.enc_i_neg : Optional [ torch.Tensor ] = torch.zeros(encs.size(), dtype=torch.float32)
+        self.pad_mask : Optional [ torch.Tensor ] = torch.zeros(1, encs.size(1), dtype=torch.bool)
+        self.means : Optional [ torch.Tensor ] = torch.zeros(1, encs.size(1), dtype=torch.float32)
+        self.rnn_h : Optional [ torch.Tensor ] = torch.zeros(1, encs.size(1), dtype=torch.float32)
         self.decoding_step = 0 
    
     def forward(
@@ -99,11 +97,14 @@ class MOLAttn(torch.nn.Module):
         device = enc_z.device
 
         if self.decoding_step == 0:
-          self.irange = self.isteps[:,:,:enc_z.size(1)].expand(
-              batch,
+          # print(self.isteps[:,:enc_z.size(1),:].size())
+          irange = self.isteps[:,:enc_z.size(1),:].repeat(
+              1,
+              1,
               self.num_dists,
-              enc_z.size(1)
-             ).to(device).transpose(2,1)
+             ).to(device)
+          # print(irange)
+
           # isteps = enc_z.size(1)
           # irange = torch.tensor(
           #   [
@@ -118,8 +119,8 @@ class MOLAttn(torch.nn.Module):
           #     self.num_dists
           #   ).to(device)
           
-          self.enc_i_pos = self.irange + 0.5
-          self.enc_i_neg = self.irange - 0.5
+          self.enc_i_pos = irange + 0.5
+          self.enc_i_neg = irange - 0.5
           
           self.pad_mask = make_pad_mask(enc_z_lens)
 
@@ -161,9 +162,9 @@ class MOLAttn(torch.nn.Module):
         # print(f"means {means.size()} encipos {self.enc_i_pos.size()} scales {scales.size()} weights {weights.size()}  self.enc_i_pos{self.enc_i_pos.size()}")
         # print(self.enc_i_pos)
 
-        means = self.means.expand(self.enc_i_pos.size())
-        scales = scales.expand(self.enc_i_pos.size())
-        weights = weights.expand(self.enc_i_pos.size())
+        means = self.means.repeat(1, self.enc_i_pos.size(1), 1)
+        scales = scales.repeat(1, self.enc_i_pos.size(1), 1)
+        weights = weights.repeat(1, self.enc_i_pos.size(1), 1)
         
         f1 = F.sigmoid((self.enc_i_pos - means) / scales)
 
@@ -173,7 +174,7 @@ class MOLAttn(torch.nn.Module):
                 
         rnn_w = (weights * f)
         
-        rnn_w = rnn_w.sum(2).unsqueeze(-1)
+        rnn_w = rnn_w.sum(2)
 
         rnn_w += 1e-7
         rnn_w[self.pad_mask] = 0
@@ -181,11 +182,18 @@ class MOLAttn(torch.nn.Module):
         # rnn_w = F.softmax(rnn_w, 1)
 
         self.decoding_step += 1
+        
+        if self.training:
+          return torch.sum(
+            rnn_w.unsqueeze(2) * enc_z, 
+            dim=1
+          ).to(device),  \
+          rnn_w #, rnn_h  
+        else:
+          return torch.sum(
+            rnn_w[0].unsqueeze(1) * enc_z[0], 
+            dim=0
+          ).to(device).unsqueeze(0), rnn_w #, rnn_h  
 
-        return torch.sum(
-          rnn_w * enc_z, 
-          dim=1
-        ).to(device),  \
-        rnn_w.squeeze(-1) #, rnn_h  
         
         

@@ -417,7 +417,7 @@ class Decoder(torch.nn.Module):
 
         # initialize attention
         prev_att_w : Optional [ torch.Tensor ] = None
-        self.att.reset()
+        self.att.reset(hs)
 
         # loop for an output sequence
         outs, logits, att_ws = [], [], []
@@ -525,14 +525,8 @@ class Decoder(torch.nn.Module):
         prev_out = hs.new_zeros(1, self.odim)
 
         # initialize attention
-        prev_att_w : Optional [ torch.Tensor ]= None
-        self.att.reset()
-
-        # setup for attention constraint
-        if use_att_constraint:
-            last_attended_idx = 0
-        else:
-            last_attended_idx = None
+        prev_att_w : Optional [ torch.Tensor ]= torch.zeros(1)
+        self.att.reset(hs)
 
         # loop for an output sequence
         idx = 0
@@ -594,21 +588,16 @@ class Decoder(torch.nn.Module):
                 prev_att_w = prev_att_w + att_w  # Note: error when use +=
             else:
                 prev_att_w = att_w
-            if use_att_constraint:
-                last_attended_idx = int(att_w.argmax())
+            
         outs_t = torch.cat(outs, dim=0)  
 
         if self.postnet is not None:
           outs_t = outs_t + self.postnet(outs_t)  
-        outs_t = outs_t.transpose(2, 1)  
-
-        print(outs_t.size())
 
         att_ws_t = torch.cat(att_ws, dim=0)
-        if self.output_activation_fn is not None:
-            outs_t = self.output_activation_fn(outs)
-        
-        return outs_t.squeeze(0), att_ws_t
+        # if self.output_activation_fn is not None:
+        #     outs_t = self.output_activation_fn(outs)
+        return outs_t.squeeze(1), att_ws_t
 
     def calculate_all_attentions(self, hs, hlens, ys):
         """Calculate all of the attention weights.

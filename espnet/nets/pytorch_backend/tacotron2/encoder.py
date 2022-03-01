@@ -13,6 +13,8 @@ import torch
 from torch.nn.utils.rnn import pack_padded_sequence
 from torch.nn.utils.rnn import pad_packed_sequence
 
+from typing import Optional
+
 
 def encoder_init(m):
     """Initialize encoder parameters."""
@@ -47,6 +49,8 @@ class Encoder(torch.nn.Module):
         use_residual=False,
         dropout_rate=0.5,
         padding_idx=0,
+        num_prosody_clusters=5,
+        prosody_embed_dim=64
     ):
         """Initialize Tacotron2 encoder module.
 
@@ -79,7 +83,7 @@ class Encoder(torch.nn.Module):
 
         if econv_layers > 0:
             self.convs = torch.nn.ModuleList()
-            for layer in six.moves.range(econv_layers):
+            for layer in range(econv_layers):
                 ichans = (
                     embed_dim if layer == 0 and input_layer == "embed" else econv_chans
                 )
@@ -127,7 +131,9 @@ class Encoder(torch.nn.Module):
         # initialize
         self.apply(encoder_init)
 
-    def forward(self, xs, ilens=None):
+        self.blstm.flatten_parameters()
+
+    def forward(self, xs, ilens : Optional [ torch.Tensor ]=None):
         """Calculate forward propagation.
 
         Args:
@@ -143,19 +149,22 @@ class Encoder(torch.nn.Module):
         """
         xs = self.embed(xs).transpose(1, 2)
         if self.convs is not None:
-            for i in six.moves.range(len(self.convs)):
+            for layer in self.convs:
                 if self.use_residual:
-                    xs += self.convs[i](xs)
+                    xs += layer(xs)
                 else:
-                    xs = self.convs[i](xs)
+                    xs = layer(xs)
         if self.blstm is None:
             return xs.transpose(1, 2)
-        if not isinstance(ilens, torch.Tensor):
-            ilens = torch.tensor(ilens)
-        xs = pack_padded_sequence(xs.transpose(1, 2), ilens.cpu(), batch_first=True)
-        self.blstm.flatten_parameters()
-        xs, _ = self.blstm(xs)  # (B, Tmax, C)
-        xs, hlens = pad_packed_sequence(xs, batch_first=True)
+        
+        if self.training:
+          ilens = torch.jit._unwrap_optional(xs)
+          xp = pack_padded_sequence(xs.transpose(1, 2), ilens.cpu(), batch_first=True)
+          xp, _ = self.blstm(xp)  # (B, Tmax, C)
+          xs, hlens = pad_packed_sequence(xp, batch_first=True)
+        else:
+          xs, _ = self.blstm(xs.transpose(1,2))  # (B, Tmax, C)
+          hlens = torch.tensor([xs.size(1)])
 
         return xs, hlens
 
@@ -170,7 +179,11 @@ class Encoder(torch.nn.Module):
             Tensor: The sequences of encoder states(T, eunits).
 
         """
-        xs = x.unsqueeze(0)
-        ilens = torch.tensor([x.size(0)])
+        
+        if len(x.size()) == 1:
+          xs = x.unsqueeze(0)
+        else:
+          xs = x
+        ilens = torch.tensor([xs.size(1)])
 
         return self.forward(xs, ilens)[0][0]
