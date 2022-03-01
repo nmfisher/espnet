@@ -158,13 +158,13 @@ class Encoder(torch.nn.Module):
             return xs.transpose(1, 2)
         
         if self.training:
-          ilens = torch.jit._unwrap_optional(xs)
+          # ilens = torch.jit._unwrap_optional(xs)
           xp = pack_padded_sequence(xs.transpose(1, 2), ilens.cpu(), batch_first=True)
           xp, _ = self.blstm(xp)  # (B, Tmax, C)
           xs, hlens = pad_packed_sequence(xp, batch_first=True)
         else:
           xs, _ = self.blstm(xs.transpose(1,2))  # (B, Tmax, C)
-          hlens = torch.tensor([xs.size(1)])
+          hlens = ilens
 
         return xs, hlens
 
