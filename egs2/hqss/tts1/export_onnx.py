@@ -19,7 +19,6 @@ from typing import Optional
 from espnet2.bin.tts_inference import Text2Speech
 from espnet2.bin.tts_inference import Text2Speech
 from espnet2.utils.types import str_or_none
-from espnet2.tts.hqss import HQSS
 
 import torch.nn.functional as F
 
@@ -43,8 +42,8 @@ if __name__ == "__main__":
     #logging.info("Preparing pretrained model from: %s", args.tts_tag)
     device = "cpu"#text2speech.device
     tts = Text2Speech.from_pretrained(
-        model_file="./exp/tts_train_hqss_bfcc_phn_none/train.loss.best.pth",
-        train_config="./exp/tts_train_hqss_bfcc_phn_none/config.yaml",
+        model_file="./exp/tts_train_tacotron_bfcc_phn_none/train.loss.best.pth",
+        train_config="./exp/tts_train_tacotron_bfcc_phn_none/config.yaml",
         vocoder_tag=None,
         device=device,
     )
@@ -59,18 +58,19 @@ if __name__ == "__main__":
         model = tts.model.tts
         model.eval()
 
+        # text: torch.Tensor,
+        # durations: Optional[torch.Tensor] = None,
+        # pitch: Optional[torch.Tensor] = None,
+        # sids: Optional[torch.Tensor] = None,
         inputs = (
-            torch.zeros(1, 10,dtype=torch.int).to(device), 
-            torch.tensor([10], dtype=torch.long).to(device), 
-            torch.zeros(1, 10,dtype=torch.int).to(device),
-            torch.tensor([10], dtype=torch.long).to(device), 
-            torch.zeros(1, 10,dtype=torch.int).to(device),
-            torch.tensor([10], dtype=torch.long).to(device), 
+            torch.zeros(10,dtype=torch.int).to(device), 
+            torch.zeros(10,dtype=torch.int).to(device),
+            torch.zeros(10,dtype=torch.int).to(device),
             torch.zeros(1,dtype=torch.long).to(device),
         )
 
         # plain method invocation to confirm that everything works correctly outside torch.jit.script
-        model.forward = model.export
+        model.forward = model.inference
 
         model.forward(*inputs)
         
@@ -80,35 +80,37 @@ if __name__ == "__main__":
         # export
         torch.onnx.export(
             scripted_module,
-            #tts.model.tts,
-            # model_tts.to(device),
+            # model,
             inputs,
             'tts_model.onnx',
-            example_outputs=(
-              torch.zeros(1, 75, 20), # PCM output is B x num_frames x num_feats
-              torch.zeros(1, 75, 16) # phone_att_ws output is B x num_frames x text_input_length
-            ), 
+            # example_outputs=(
+            #   torch.zeros(20, 75), # PCM output is B x num_frames x num_feats
+            #   torch.zeros(75, 10) # phone_att_ws output is B x num_frames x text_input_length
+            # ), 
             export_params=True,
-            opset_version=12,
+            opset_version=13,
             do_constant_folding=False,
             verbose=True,
-            input_names=['phones', 'phone_lens', 'durations', 'duration_lens', 'pitch', 'pitch_lens', 'sids' ],
-            output_names=['pcm','phone_att_ws'],
+            input_names=['phones', 'durations', 'pitch',  'sids' ],
+            output_names=['pcm','att_ws'],
             dynamic_axes={
                 'phones': {
-                    1: 'length'
+                    0: 'length'
                 },
                 'durations': {
-                    1: 'length'
+                    0: 'length'
                 },
                 'pitch': {
-                    1: 'length'
+                    0: 'length'
                 },
                 'pcm': {
-                    1: 'length'
+                    0: 'olen', 
+                    # 1: 'ilen'
+                    # 1: 'length' 
                 },
-                'phone_att_ws': {
-                    1: 'length'
+                'att_ws': {
+                    0: 'olen',
+                    1: 'ilen'
                 }
             }
         )
