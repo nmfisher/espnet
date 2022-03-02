@@ -125,13 +125,13 @@ class Encoder(torch.nn.Module):
             self.blstm = torch.nn.LSTM(
                 iunits, eunits // 2, elayers, batch_first=True, bidirectional=True
             )
+            self.blstm.flatten_parameters()
         else:
             self.blstm = None
 
         # initialize
         self.apply(encoder_init)
 
-        self.blstm.flatten_parameters()
 
     def forward(self, xs, ilens : Optional [ torch.Tensor ]=None):
         """Calculate forward propagation.
@@ -155,10 +155,10 @@ class Encoder(torch.nn.Module):
                 else:
                     xs = layer(xs)
         if self.blstm is None:
-            return xs.transpose(1, 2)
+            return xs.transpose(1, 2), ilens
         
         if self.training:
-          # ilens = torch.jit._unwrap_optional(xs)
+          ilens = torch.jit._unwrap_optional(ilens)
           xp = pack_padded_sequence(xs.transpose(1, 2), ilens.cpu(), batch_first=True)
           xp, _ = self.blstm(xp)  # (B, Tmax, C)
           xs, hlens = pad_packed_sequence(xp, batch_first=True)

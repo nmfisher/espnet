@@ -340,8 +340,9 @@ class Decoder(torch.nn.Module):
         # define lstm network
         prenet_units = prenet_units if prenet_layers != 0 else odim
         self.lstm = torch.nn.ModuleList()
+        
         for layer in six.moves.range(dlayers):
-            iunits = idim + prenet_units if layer == 0 else dunits
+            iunits = 768 if layer == 0 else dunits  #idim + prenet_units if layer == 0 else dunits
             lstm = torch.nn.LSTMCell(iunits, dunits)
             if zoneout_rate > 0.0:
                 lstm = ZoneOutCell(lstm, zoneout_rate)
@@ -374,8 +375,8 @@ class Decoder(torch.nn.Module):
 
         # define projection layers
         iunits = idim + dunits if use_concate else dunits
-        self.feat_out = torch.nn.Linear(iunits, odim * reduction_factor, bias=False)
-        self.prob_out = torch.nn.Linear(iunits, reduction_factor)
+        self.feat_out = torch.nn.Linear(768, odim * reduction_factor, bias=False)
+        self.prob_out = torch.nn.Linear(768, reduction_factor)
 
         # initialize
         self.apply(decoder_init)
@@ -591,8 +592,8 @@ class Decoder(torch.nn.Module):
             
         outs_t = torch.cat(outs, dim=0)  
 
-        if self.postnet is not None:
-          outs_t = outs_t + self.postnet(outs_t)  
+        # if self.postnet is not None:
+        #   outs_t = outs_t + self.postnet(outs_t)  
 
         att_ws_t = torch.cat(att_ws, dim=0)
         # if self.output_activation_fn is not None:

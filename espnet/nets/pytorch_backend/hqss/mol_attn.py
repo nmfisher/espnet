@@ -5,10 +5,9 @@ import math
 import torch
 import torch.nn.functional as F
 import numpy as np 
-from espnet.nets.pytorch_backend.hqss.prenet import Prenet
 
-from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
-from espnet.nets.pytorch_backend.nets_utils import to_device
+from espnet.nets.pytorch_backend.tacotron2.utils import make_pad_mask
+
 
 from typing import Optional
 
@@ -32,7 +31,8 @@ class MOLAttn(torch.nn.Module):
         super(MOLAttn, self).__init__()
         self.enc_dim = enc_dim
         self.adim = adim
-        self.rnn = torch.nn.GRU(enc_dim, adim, batch_first=True)
+        # self.rnn = torch.nn.GRU(enc_dim, adim, batch_first=True)
+        self.cnn = torch.nn.Conv1d(1, 1, 3)
         
         self.num_dists = num_dists
         
@@ -41,7 +41,7 @@ class MOLAttn(torch.nn.Module):
         # accepts hidden state of B x S x HS
         # outputs B x S x 
         self.param_net = torch.nn.Sequential(
-                torch.nn.Linear(adim, 128), 
+                torch.nn.Linear(254, 128), 
                 torch.nn.Tanh(),
                 torch.nn.Linear(128, self.num_dists * 3)
             ) 
@@ -65,11 +65,7 @@ class MOLAttn(torch.nn.Module):
     
     def reset(self, encs):
         """reset states"""
-        # self.means =  torch.zeros(1, dtype=torch.float32)
-        # self.enc_i_pos : Optional [ torch.Tensor ] = torch.zeros(1,1,1, dtype=torch.float32)
-        # self.enc_i_neg : Optional [ torch.Tensor ] = torch.zeros(1,1,1, dtype=torch.float32)
-        # self.pad_mask : Optional [ torch.Tensor ] = torch.ones(1,1, dtype=torch.bool)
-        # self.rnn_h : Optional [ torch.Tensor ] = torch.zeros(1,1,1, dtype=torch.float32)
+
         self.enc_i_pos : Optional [ torch.Tensor ] = torch.zeros(encs.size(), dtype=torch.float32)
         self.enc_i_neg : Optional [ torch.Tensor ] = torch.zeros(encs.size(), dtype=torch.float32)
         self.pad_mask : Optional [ torch.Tensor ] = torch.zeros(1, encs.size(1), dtype=torch.bool)
@@ -103,22 +99,7 @@ class MOLAttn(torch.nn.Module):
               1,
               self.num_dists,
              ).to(device)
-          # print(irange)
-
-          # isteps = enc_z.size(1)
-          # irange = torch.tensor(
-          #   [
-          #     np.arange(
-          #       isteps
-          #     )
-          #   ]
-          # )
-          # self.irange = irange.unsqueeze(-1).expand(
-          #     batch,
-          #     isteps,
-          #     self.num_dists
-          #   ).to(device)
-          
+           
           self.enc_i_pos = irange + 0.5
           self.enc_i_neg = irange - 0.5
           
@@ -127,16 +108,16 @@ class MOLAttn(torch.nn.Module):
         # rnn_c = torch.cat([rnn_c, prev_c], dim=1).unsqueeze(1)
         rnn_c = rnn_c.unsqueeze(1)
 
-        if self.decoding_step > 0:
-          rnn_c, self.rnn_h = self.rnn(
-            rnn_c,self.rnn_h
-          )        
-        else:
-          rnn_c, self.rnn_h = self.rnn(
-            rnn_c,None
-          )        
+        # if self.decoding_step > 0:
+        #   rnn_c, self.rnn_h = self.rnn(
+        #     rnn_c,self.rnn_h
+        #   )        
+        # else:
+        #   rnn_c, self.rnn_h = self.rnn(
+        #     rnn_c,None
+        #   )        
+        rnn_c = self.cnn(rnn_c)
  
-
         params = self.param_net(rnn_c)
 
         means = F.sigmoid(
@@ -177,13 +158,14 @@ class MOLAttn(torch.nn.Module):
         rnn_w = rnn_w.sum(2)
 
         rnn_w += 1e-7
+        
         rnn_w[self.pad_mask] = 0
         # rnn_w[self.pad_mask] = -math.inf
         # rnn_w = F.softmax(rnn_w, 1)
 
         self.decoding_step += 1
         
-        if self.training:
+        if self.training or rnn_w.size(0) != 1:
           return torch.sum(
             rnn_w.unsqueeze(2) * enc_z, 
             dim=1

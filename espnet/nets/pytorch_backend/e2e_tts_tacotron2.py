@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask
+from espnet.nets.pytorch_backend.tacotron2.utils import make_non_pad_mask
 from espnet.nets.pytorch_backend.rnn.attentions import AttForward
 from espnet.nets.pytorch_backend.rnn.attentions import AttForwardTA
 from espnet.nets.pytorch_backend.rnn.attentions import AttLoc

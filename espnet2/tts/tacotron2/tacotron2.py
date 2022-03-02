@@ -18,9 +18,6 @@ from typeguard import check_argument_types
 from espnet.nets.pytorch_backend.e2e_tts_tacotron2 import GuidedAttentionLoss
 from espnet.nets.pytorch_backend.e2e_tts_tacotron2 import Tacotron2Loss
 from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
-from espnet.nets.pytorch_backend.rnn.attentions import AttForward
-from espnet.nets.pytorch_backend.rnn.attentions import AttForwardTA
-from espnet.nets.pytorch_backend.rnn.attentions import AttLoc
 from espnet.nets.pytorch_backend.tacotron2.decoder import Decoder
 from espnet.nets.pytorch_backend.tacotron2.encoder import Encoder
 from espnet2.torch_utils.device_funcs import force_gatherable
@@ -266,7 +263,7 @@ class Tacotron2(AbsTTS):
                 sigma=guided_attn_loss_sigma,
                 alpha=guided_attn_loss_lambda,
             )
-
+    @torch.jit.ignore
     def forward(
         self,
         text: torch.Tensor,

@@ -10,7 +10,7 @@ tts: tacotron2                   # model architecture
 tts_conf:                        # keyword arguments for the selected model
     num_prosody_clusters: 5
     embed_dim: 128               # char or phn embedding dimension
-    elayers: 1                   # number of blstm layers in encoder
+    elayers: 0                   # number of blstm layers in encoder
     eunits: 256                  # number of blstm units
     econv_layers: 3              # number of convolutional layers in encoder
     econv_chans: 512             # number of channels in convolutional layer
@@ -20,8 +20,8 @@ tts_conf:                        # keyword arguments for the selected model
     aconv_chans: 32              # number of channels in convolutional layer of attention
     aconv_filts: 15              # filter size of convolutional layer of attention
     cumulate_att_w: true         # whether to cumulate attention weight
-    dlayers: 2                   # number of lstm layers in decoder
-    dunits: 384                 # number of lstm units in decoder
+    dlayers: 3                   # number of lstm layers in decoder
+    dunits: 256                 # number of lstm units in decoder
     prenet_layers: 2             # number of layers in prenet
     prenet_units: 256            # number of units in prenet
     postnet_layers: 5            # number of layers in postnet
@@ -31,8 +31,8 @@ tts_conf:                        # keyword arguments for the selected model
     use_batch_norm: true         # whether to use batch normalization in encoder
     use_concate: true            # whether to concatenate encoder embedding with decoder outputs
     use_residual: false          # whether to use residual connection in encoder
-    spk_embed_dim: 512              # dimension of speaker embedding
-    spk_embed_integration_type: add # how to integrate speaker embedding
+    #spk_embed_dim: 512              # dimension of speaker embedding
+    #spk_embed_integration_type: add # how to integrate speaker embedding
     use_gst: false                # whether to use GST embedding
     gst_heads: 4                 # number of heads in GST multi-head attention
     gst_tokens: 16               # number of global style tokens
