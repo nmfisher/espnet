@@ -527,14 +527,14 @@ class FastSpeech2(AbsTTS):
             Tensor: Weight value if not joint training else model outputs.
 
         """
-        print(f"text {text.size()} feats {feats.size()} durations {durations.size()} pitch {pitch.size()}")
+
         text = text[:, : text_lengths.max()]  # for data-parallel
         feats = feats[:, : feats_lengths.max()]  # for data-parallel
         durations = durations[:, : durations_lengths.max()]  # for data-parallel
         pitch = pitch[:, : pitch_lengths.max()]  # for data-parallel
         energy = energy[:, : energy_lengths.max()]  # for data-parallel
 
-        print(f"text {text.size()} feats {feats.size()} durations {durations.size()} pitch {pitch.size()}")
+        
 
         batch_size = text.size(0)
 
@@ -632,9 +632,9 @@ class FastSpeech2(AbsTTS):
     ) -> Sequence[torch.Tensor]:
         # forward encoder
         x_masks = self._source_mask(ilens)
-        print(xs.size())
+        
         hs, _ = self.encoder(xs, x_masks)  # (B, T_text, adim)
-        print(hs.size())
+        
         # integrate with GST
         if self.use_gst:
             style_embs = self.gst(ys)
@@ -676,6 +676,7 @@ class FastSpeech2(AbsTTS):
             # use groundtruth in training
             p_embs = self.pitch_embed(ps.transpose(1, 2)).transpose(1, 2)
             e_embs = self.energy_embed(es.transpose(1, 2)).transpose(1, 2)
+            
             hs = hs + e_embs + p_embs
             hs = self.length_regulator(hs, ds)  # (B, T_feats, adim)
 
@@ -743,7 +744,7 @@ class FastSpeech2(AbsTTS):
         spemb, d, p, e = spembs, durations, pitch, energy
 
         # add eos at the last of sequence
-        x = F.pad(x, [0, 1], "constant", self.eos)
+        # x = F.pad(x, [0, 1], "constant", self.eos)
 
         # setup batch axis
         ilens = torch.tensor([x.shape[0]], dtype=torch.long, device=x.device)
@@ -752,7 +753,8 @@ class FastSpeech2(AbsTTS):
             ys = y.unsqueeze(0)
         if spemb is not None:
             spembs = spemb.unsqueeze(0)
-
+        use_teacher_forcing = True
+        
         if use_teacher_forcing:
             # use groundtruth of duration, pitch, and energy
             ds, ps, es = d.unsqueeze(0), p.unsqueeze(0), e.unsqueeze(0)
