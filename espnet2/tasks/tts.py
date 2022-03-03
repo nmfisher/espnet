@@ -263,7 +263,7 @@ class TTSTask(AbsTask):
             retval = ("spembs", "durations", "pitch", "energy", "sids", "lids")
         else:
             # Inference mode
-            retval = ("spembs", "speech", "durations", "sids", "lids")
+            retval = ("spembs", "speech", "durations", "pitch", "energy", "sids", "lids")
         return retval
 
     @classmethod
@@ -283,7 +283,7 @@ class TTSTask(AbsTask):
 
         vocab_size = len(token_list)
         logging.info(f"Vocabulary size: {vocab_size }")
-
+        
         # 1. feats_extract
         if args.odim is None:
             # Extract features in the model
@@ -296,7 +296,7 @@ class TTSTask(AbsTask):
             args.feats_extract_conf = None
             feats_extract = None
             odim = args.odim
-
+        
         # 2. Normalization layer
         if args.normalize is not None:
             normalize_class = normalize_choices.get_class(args.normalize)
