@@ -577,14 +577,15 @@ class Decoder(torch.nn.Module):
                 if self.use_concate
                 else z_list[-1]
             )
-            outs += [self.feat_out(zcs).view(1, self.odim, -1)]  # [(1, odim, r), ...]
+
+            outs += [self.feat_out(zcs)]  # [(1, odim, r), ...]
             
             stop_prob = torch.sigmoid(self.prob_out(zcs))[0].item()
             
             if self.output_activation_fn is not None:
                 prev_out = self.output_activation_fn(outs[-1][:, :, -1])  # (1, odim)
             else:
-                prev_out = outs[-1][:, :, -1]  # (1, odim)
+                prev_out = outs[-1]  # (1, odim)
             if self.cumulate_att_w and prev_att_w is not None:
                 prev_att_w = prev_att_w + att_w  # Note: error when use +=
             else:
@@ -598,7 +599,7 @@ class Decoder(torch.nn.Module):
         att_ws_t = torch.cat(att_ws, dim=0)
         # if self.output_activation_fn is not None:
         #     outs_t = self.output_activation_fn(outs)
-        return outs_t.squeeze(1), att_ws_t
+        return outs_t, att_ws_t
 
     def calculate_all_attentions(self, hs, hlens, ys):
         """Calculate all of the attention weights.

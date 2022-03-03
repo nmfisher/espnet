@@ -63,10 +63,10 @@ if __name__ == "__main__":
         # pitch: Optional[torch.Tensor] = None,
         # sids: Optional[torch.Tensor] = None,
         inputs = (
-            torch.zeros(1,10,dtype=torch.int).to(device), 
-            torch.zeros(1,10,dtype=torch.int).to(device),
-            torch.zeros(1,10,dtype=torch.int).to(device),
-            torch.zeros(1,1,dtype=torch.long).to(device),
+            torch.zeros(10,dtype=torch.int).to(device), 
+            torch.zeros(10,dtype=torch.int).to(device),
+            torch.zeros(10,dtype=torch.int).to(device),
+            torch.zeros(1,dtype=torch.long).to(device),
         )
 
         # plain method invocation to confirm that everything works correctly outside torch.jit.script
@@ -88,29 +88,27 @@ if __name__ == "__main__":
             #   torch.zeros(75, 10) # phone_att_ws output is B x num_frames x text_input_length
             # ), 
             export_params=True,
-            opset_version=13,
+            opset_version=14,
             do_constant_folding=False,
             verbose=True,
             input_names=['phones', 'durations', 'pitch',  'sids' ],
             output_names=['pcm','att_ws'],
             dynamic_axes={
                 'phones': {
-                    1: 'length'
+                    0: 'length'
                 },
                 'durations': {
-                    1: 'length'
+                    0: 'length'
                 },
                 'pitch': {
-                    1: 'length'
+                    0: 'length'
                 },
                 'pcm': {
-                    1: 'olen', 
-                    # 1: 'ilen'
-                    # 1: 'length' 
+                    0: 'olen', 
                 },
                 'att_ws': {
-                    1: 'olen',
-                    2: 'ilen'
+                    0: 'olen',
+                    1: 'ilen'
                 }
             }
         )
