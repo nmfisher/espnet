@@ -1,0 +1,81 @@
+#!/usr/bin/env python3.7
+from functools import reduce
+import torch
+import itertools
+import argparse
+import logging
+import sys
+import numpy as np
+from espnet.transform.transformation import Transformation
+from espnet.utils.cli_readers import file_reader_helper
+from espnet.utils.cli_utils import get_commandline_args
+import pyworld
+import librosa
+from kaldiio import ReadHelper, WriteHelper
+from sklearn.cluster import KMeans
+from espnet2.layers.stft import Stft
+
+"""
+There will occasionally be a slight mismatch between the number of frames in extracted BFCCs versus the number of frames in durations extracted via Kaldi alignment.
+Usually this is only a single frame, and occurs due to differences in rounding between different toolkits.
+This script fixes this by adding/subtracting the frame difference from the first/last phone durations. These are usually SIL/SPN/etc so the difference is not noticeable.
+"""
+
+def get_parser():
+    parser = argparse.ArgumentParser(
+        description="converts frame-level F0 values to K-means centroids",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--verbose", "-V", default=0, type=int, help="Verbose option")
+
+    parser.add_argument(
+        "train_feats", type=str, help="Path to train BFCCs data/train/feats.scp"
+    )
+    parser.add_argument(
+        "valid_feats", type=str, help="Path to validation BFCCs e.g. data/valid/feats.scp"
+    )
+    parser.add_argument(
+        "train_durations", type=str, help="Path to train durations (frame lengths). e.g. data/train/durations"
+    )
+    parser.add_argument(
+        "train_durations_out", type=str, help="Output path for fixed train durations e.g. dump/raw/train/durations"
+    )
+    parser.add_argument(
+        "valid_durations", type=str, help="Path to valid durations (frame lengths). e.g. data/valid/durations"
+    )
+    parser.add_argument(
+        "valid_durations_out", type=str, help="Output path for fixed validation durations e.g. dump/raw/valid/durations"
+    )
+    return parser
+
+
+def fix(feats_file, durations_file, durations_out_file):
+  with open(durations_out_file, "w") as dur_writer:
+    with ReadHelper("scp:" + feats_file) as feats_reader, ReadHelper("ark,t:" + durations_file) as dur_reader:
+      for (utt_id, feats), (_, durations) in zip(feats_reader, dur_reader):
+        dsum = durations.sum()
+        if dsum < feats.shape[0]:
+          durations[-1] += (feats.shape[0] - dsum)
+        elif dsum > feats.shape[0]:
+          durations[0] -= (dsum - feats.shape[0])
+        assert(durations.sum() == feats.shape[0])
+        dur_writer.write("%s %s\n" % (utt_id, " ".join([str(int(x)) for x in durations])))
+
+def main():
+    parser = get_parser()
+    args = parser.parse_args()
+
+    # logging info
+    logfmt = "%(asctime)s (%(module)s:%(lineno)d) %(levelname)s: %(message)s"
+    if args.verbose > 0:
+        logging.basicConfig(level=logging.INFO, format=logfmt)
+    else:
+        logging.basicConfig(level=logging.WARN, format=logfmt)
+    logging.info(get_commandline_args())
+
+    fix(args.train_feats, args.train_durations, args.train_durations_out)
+    fix(args.valid_feats, args.valid_durations, args.valid_durations_out)
+
+
+if __name__ == "__main__":
+    main()
