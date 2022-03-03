@@ -157,6 +157,8 @@ class Text2Speech:
         text: Union[str, torch.Tensor, np.ndarray],
         speech: Union[torch.Tensor, np.ndarray] = None,
         durations: Union[torch.Tensor, np.ndarray] = None,
+        energy: Union[torch.Tensor, np.ndarray] = None,
+        pitch: Union[torch.Tensor, np.ndarray] = None,
         spembs: Union[torch.Tensor, np.ndarray] = None,
         sids: Union[torch.Tensor, np.ndarray] = None,
         lids: Union[torch.Tensor, np.ndarray] = None,
@@ -174,7 +176,6 @@ class Text2Speech:
             raise RuntimeError("Missing required argument: 'lids'")
 #        if self.use_spembs and spembs is None:
 #            raise RuntimeError("Missing required argument: 'spembs'")
-
         # prepare batch
         if isinstance(text, str):
             text = self.preprocess_fn("<dummy>", dict(text=text))["text"]
@@ -183,6 +184,10 @@ class Text2Speech:
             batch.update(speech=speech)
         if durations is not None:
             batch.update(durations=durations)
+        if pitch  is not None:
+            batch.update(pitch=pitch)
+        if energy  is not None:
+            batch.update(energy=energy)
         if spembs is not None:
             batch.update(spembs=spembs)
         if sids is not None:
@@ -443,6 +448,8 @@ def inference(
             batch = {k: v[0] for k, v in batch.items() if not k.endswith("_lengths")}
 
             start_time = time.perf_counter()
+
+            
             output_dict = text2speech(**batch)
 
             key = keys[0]
