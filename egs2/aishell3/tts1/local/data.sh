@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+exit;
+
 set -e
 set -u
 set -o pipefail
