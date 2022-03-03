@@ -24,7 +24,7 @@ def get_parser():
     parser.add_argument(
         "--hop_length",
         type=int,
-        default=256,
+        default=160,
         help="hop_length used during feat extraction (this is needed as this script accepts ms durations as input, which are then converted to frames"
     )
     parser.add_argument(
