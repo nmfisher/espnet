@@ -1,0 +1,69 @@
+# This configuration is for ESPnet2 to train HQSS
+
+##########################################################
+#                  TTS MODEL SETTING                     #
+##########################################################
+tts: hqss                   # model architecture
+tts_conf:                        # keyword arguments for the selected model
+    num_prosody_clusters: 5
+    spkr_embed_dim: 64
+    # encoder
+    phone_embed_dim: 64               # phn embedding dimension
+    prosody_embed_dim: 16               # prosody embedding dimension
+    cbhg_layers: 3               # number of CBHG units in each encoder
+    cbhg_conv_layers: 4          # number of convolutional layers in each CBHG layer 
+    cbhg_conv_chans: 512         # number of channels in convolutional layer
+    cbhg_conv_filts: 5            # filter size of convolutional layer
+    cbhg_gru_units: 256
+    # attention 
+    adim: 256                    # attention dimension
+    # decoder
+    dropout_rate: 0.05
+    zoneout_rate: 0.05
+    prenet_layers: 4
+    prenet_units: 512
+    dlayers: 2
+    dunits: 512
+    postnet_layers: 5
+    postnet_chans: 512
+    #reduction_factor: 1
+
+##########################################################
+#                  OPTIMIZER SETTING                     #
+##########################################################
+optim: adam           # optimizer type
+optim_conf:           # keyword arguments for selected optimizer
+    lr: 1.0e-03       # learning rate
+    eps: 1.0e-05      # epsilon
+    weight_decay: 0 #1.0e-5 # weight decay coefficient
+
+##########################################################
+#                OTHER TRAINING SETTING                  #
+##########################################################
+num_iters_per_epoch: 100    # number of iterations per epoch
+max_epoch: 100              # number of epochs
+grad_clip: 1              # gradient clipping norm
+grad_noise: false           # whether to use gradient noise injection
+accum_grad: 1               # gradient accumulation
+# batch_bins: 1600000       # batch bins (for feats_type=fbank)
+batch_bins: 128000         # batch bins (for feats_type=raw, *= n_shift / n_mels)
+#batch_size: 1
+#batch_type: unsorted
+batch_type: numel           # how to make batch
+allow_variable_data_keys: true
+sort_in_batch: descending   # how to sort data in making batch
+sort_batch: descending      # how to sort created batches
+num_workers: 1              # number of workers of data loader
+train_dtype: float32        # dtype in training
+log_interval: null          # log interval in iterations
+keep_nbest_models: 5        # number of models to keep
+num_att_plot: 3             # number of attention figures to be saved in every check
+seed: 0                     # random seed number
+best_model_criterion:
+-   - valid
+    - loss
+    - min
+-   - train
+    - loss
+    - min
+
