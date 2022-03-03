@@ -98,13 +98,13 @@ class ESPnetTTSModel(AbsESPnetModel):
             else:
                 # Use precalculated feats (feats_type != raw case)
                 feats, feats_lengths = speech, speech_lengths
-            #for b in range(durations.size(0)):
-            #    s = durations[b,:].sum()
-            #    if s < feats_lengths[b]:
-            #        durations[b,-1] += (feats_lengths[b] - s)
-            #    elif s > feats_lengths[b]:
-            #        durations[b,0] -= (s - feats_lengths[b])
-            #    assert(durations[b,:].sum() == feats_lengths[b])
+            for b in range(durations.size(0)):
+               s = durations[b,:].sum()
+               if s < feats_lengths[b]:
+                   durations[b,-1] += (feats_lengths[b] - s)
+               elif s > feats_lengths[b]:
+                   durations[b,0] -= (s - feats_lengths[b])
+               assert(durations[b,:].sum() == feats_lengths[b])
             # Extract auxiliary features
             if self.pitch_extract is not None and pitch is None:
                 pitch, pitch_lengths = self.pitch_extract(
@@ -146,9 +146,9 @@ class ESPnetTTSModel(AbsESPnetModel):
             batch.update(lids=lids)
         if durations is not None:
             batch.update(durations=durations, durations_lengths=durations_lengths)
-        if self.pitch_extract is not None and pitch is not None:
+        if pitch is not None:
             batch.update(pitch=pitch, pitch_lengths=pitch_lengths)
-        if self.energy_extract is not None and energy is not None:
+        if energy is not None:
             batch.update(energy=energy, energy_lengths=energy_lengths)
         if self.tts.require_raw_speech:
             batch.update(speech=speech, speech_lengths=speech_lengths)
@@ -198,12 +198,12 @@ class ESPnetTTSModel(AbsESPnetModel):
         else:
             # Use precalculated feats (feats_type != raw case)
             feats, feats_lengths = speech, speech_lengths
-        #for b in range(durations.size(0)):
-        #    s = durations[b,:].sum() 
-        #    if s < feats_lengths[b]:
-        #        durations[b,-1] += (feats_lengths[b] - s)
-        #    elif s > feats_lengths[b]:
-        #        durations[b,0] -= (s - feats_lengths[b])
+        for b in range(durations.size(0)):
+           s = durations[b,:].sum() 
+           if s < feats_lengths[b]:
+               durations[b,-1] += (feats_lengths[b] - s)
+           elif s > feats_lengths[b]:
+               durations[b,0] -= (s - feats_lengths[b])
 
         if self.pitch_extract is not None:
             pitch, pitch_lengths = self.pitch_extract(
@@ -306,7 +306,13 @@ class ESPnetTTSModel(AbsESPnetModel):
             input_dict.update(sids=sids)
         if lids is not None:
             input_dict.update(lids=lids)
-
+        if pitch is not None:
+            input_dict.update(pitch=pitch)
+        if energy is not None:
+            input_dict.update(energy=energy)
+        if durations is not None:
+            input_dict.update(durations =durations )
+        
         output_dict = self.tts.inference(**input_dict, **decode_config)
 
         if self.normalize is not None and output_dict.get("feat_gen") is not None:
