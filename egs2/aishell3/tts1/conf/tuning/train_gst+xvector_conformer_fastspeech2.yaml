@@ -17,10 +17,10 @@ tts: fastspeech2      # model architecture
 tts_conf:             # keyword arguments for the selected model
     adim: 384         # attention dimension
     aheads: 2         # number of attention heads
-    elayers: 4        # number of encoder layers
-    eunits: 1536      # number of encoder ff units
-    dlayers: 4        # number of decoder layers
-    dunits: 1536      # number of decoder ff units
+    elayers: 3        # number of encoder layers
+    eunits: 1024      # number of encoder ff units
+    dlayers: 3        # number of decoder layers
+    dunits: 1024      # number of decoder ff units
     positionwise_layer_type: conv1d   # type of position-wise layer
     positionwise_conv_kernel_size: 3  # kernel size of position wise conv layer
     duration_predictor_layers: 2      # number of layers of duration predictor
@@ -33,8 +33,8 @@ tts_conf:             # keyword arguments for the selected model
     encoder_normalize_before: True    # whether to perform layer normalization before the input
     decoder_normalize_before: True    # whether to perform layer normalization before the input
     reduction_factor: 1               # reduction factor
-    encoder_type: conformer           # encoder type
-    decoder_type: conformer           # decoder type
+    encoder_type: transformer           # encoder type
+    decoder_type: transformer           # decoder type
     conformer_pos_enc_layer_type: rel_pos        # conformer positional encoding type
     conformer_self_attn_layer_type: rel_selfattn # conformer self-attention type
     conformer_activation_type: swish             # conformer activation type
@@ -49,7 +49,7 @@ tts_conf:             # keyword arguments for the selected model
     transformer_dec_dropout_rate: 0.2            # dropout rate for transformer decoder layer
     transformer_dec_positional_dropout_rate: 0.2 # dropout rate for transformer decoder positional encoding
     transformer_dec_attn_dropout_rate: 0.2       # dropout rate for transformer decoder attention layer
-    pitch_predictor_layers: 5                  # number of conv layers in pitch predictor
+    pitch_predictor_layers: 2                  # number of conv layers in pitch predictor
     pitch_predictor_chans: 256                 # number of channels of conv layers in pitch predictor
     pitch_predictor_kernel_size: 5             # kernel size of conv leyers in pitch predictor
     pitch_predictor_dropout: 0.5               # dropout rate in pitch predictor
@@ -63,17 +63,17 @@ tts_conf:             # keyword arguments for the selected model
     energy_embed_kernel_size: 1                # kernel size of conv embedding layer for energy
     energy_embed_dropout: 0.0                  # dropout rate after conv embedding layer for energy
     stop_gradient_from_energy_predictor: false # whether to stop the gradient from energy predictor to encoder
-    spk_embed_dim: 512                         # dimension of speaker embedding
-    spk_embed_integration_type: add            # how to integrate speaker embedding
-    use_gst: true                              # whether to use GST embedding
-    gst_heads: 4                               # number of heads in GST multi-head attention
-    gst_tokens: 16                             # number of global style tokens
+    #spk_embed_dim: 512                         # dimension of speaker embedding
+    #spk_embed_integration_type: add            # how to integrate speaker embedding
+    #use_gst: true                              # whether to use GST embedding
+    #gst_heads: 4                               # number of heads in GST multi-head attention
+    #gst_tokens: 16                             # number of global style tokens
 
 # extra module for additional inputs
-pitch_extract: dio           # pitch extractor type
-pitch_normalize: global_mvn  # normalizer for the pitch feature
-energy_extract: energy       # energy extractor type
-energy_normalize: global_mvn # normalizer for the energy feature
+#pitch_extract: dio           # pitch extractor type
+#pitch_normalize: global_mvn  # normalizer for the pitch feature
+#energy_extract: energy       # energy extractor type
+#energy_normalize: global_mvn # normalizer for the energy feature
 
 ##########################################################
 #            OPTIMIZER & SCHEDULER SETTING               #
