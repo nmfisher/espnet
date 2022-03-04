@@ -102,6 +102,9 @@ def extract(wavs, durations, transcripts, sample_rate, hop_length):
 
     for (utt_id, path), (_, utt_durations), (_, transcript) in zip(wavs, durations, transcripts):
 
+        if len(utt_durations) != len(transcript):
+          raise Exception(f"Number of phone frame durations does not match number of phones in transcript for utt {utt_id}, do the wav.scp/text/durations files all match exactly?")
+
         utt_durations = [ float(x) for x in utt_durations ]
 
         wav, rate = librosa.load(path[0], sr=sample_rate)
@@ -132,6 +135,7 @@ def extract(wavs, durations, transcripts, sample_rate, hop_length):
         phone_times = reduce(lambda accum, x: accum
                              + [x + accum[-1]], times, [0])
         start = 0
+        
         # iterate over every phone timestamp
         for time, phone in zip(phone_times[1:], transcript):
             # iterate from the last F0 timestamp until we find a time that's higher (i.e. later) than the phone timestamp
@@ -147,8 +151,8 @@ def extract(wavs, durations, transcripts, sample_rate, hop_length):
             start = i
                   
         if len(utt_f0) != len(transcript):
-            print(f"{path}\n transcript : {transcript}\n f0 : {utt_f0}\n DIO timestamps {t}\n phone_times {phone_times}\n original durations: {utt_durations}")
-            raise Exception("length mismatch")
+            # print(f"{path}\n transcript : {transcript}\n f0 : {utt_f0}\n DIO timestamps {t}\n phone_times {phone_times}\n original durations: {utt_durations}")
+            raise Exception(f"length mismatch for {utt_id} : {len(utt_f0)} vs {len(transcript)}")
                 
         yield (utt_id, utt_f0,es)
 
