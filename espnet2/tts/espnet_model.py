@@ -94,19 +94,22 @@ class ESPnetTTSModel(AbsESPnetModel):
         with autocast(False):
             # Extract features
             if self.feats_extract is not None:
+                raise Exception()
                 feats, feats_lengths = self.feats_extract(speech, speech_lengths)
             else:
                 # Use precalculated feats (feats_type != raw case)
                 feats, feats_lengths = speech, speech_lengths
             for b in range(durations.size(0)):
-               s = durations[b,:].sum()
-               if s < feats_lengths[b]:
-                   durations[b,-1] += (feats_lengths[b] - s)
-               elif s > feats_lengths[b]:
-                   durations[b,0] -= (s - feats_lengths[b])
-               assert(durations[b,:].sum() == feats_lengths[b])
+            #    s = durations[b,:].sum()
+            #    if s < feats_lengths[b]:
+            #        durations[b,-1] += (feats_lengths[b] - s)
+            #    elif s > feats_lengths[b]:
+            #        durations[b,0] -= (s - feats_lengths[b])
+              assert(durations[b,:].sum() == feats_lengths[b])
             # Extract auxiliary features
             if self.pitch_extract is not None and pitch is None:
+                raise Exception()
+
                 pitch, pitch_lengths = self.pitch_extract(
                     speech,
                     speech_lengths,
@@ -115,6 +118,7 @@ class ESPnetTTSModel(AbsESPnetModel):
                     durations_lengths=durations_lengths,
                 )
             if self.energy_extract is not None and energy is None:
+                raise Exception()
                 energy, energy_lengths = self.energy_extract(
                     speech,
                     speech_lengths,
@@ -124,10 +128,13 @@ class ESPnetTTSModel(AbsESPnetModel):
                 )
             # Normalize
             if self.normalize is not None:
+                raise Exception()
                 feats, feats_lengths = self.normalize(feats, feats_lengths)
             if self.pitch_normalize is not None:
+                raise Exception()
                 pitch, pitch_lengths = self.pitch_normalize(pitch, pitch_lengths)
             if self.energy_normalize is not None:
+                raise Exception()
                 energy, energy_lengths = self.energy_normalize(energy, energy_lengths)
         # Make batch for tts inputs
         batch = dict(
@@ -198,14 +205,21 @@ class ESPnetTTSModel(AbsESPnetModel):
         else:
             # Use precalculated feats (feats_type != raw case)
             feats, feats_lengths = speech, speech_lengths
+        print(feats)
+        print(feats.size())
+        print(feats_lengths)
         for b in range(durations.size(0)):
-           s = durations[b,:].sum() 
-           if s < feats_lengths[b]:
-               durations[b,-1] += (feats_lengths[b] - s)
-           elif s > feats_lengths[b]:
-               durations[b,0] -= (s - feats_lengths[b])
+        #    s = durations[b,:].sum() 
+        #    if s < feats_lengths[b]:
+        #        durations[b,-1] += (feats_lengths[b] - s)
+        #    elif s > feats_lengths[b]:
+        #        durations[b,0] -= (s - feats_lengths[b])
+          print(durations[b,:].sum())
+          print(feats_lengths[b])
+          assert(durations[b,:].sum() == feats_lengths[b])
 
         if self.pitch_extract is not None:
+            raise Exception()
             pitch, pitch_lengths = self.pitch_extract(
                 speech,
                 speech_lengths,
@@ -214,6 +228,7 @@ class ESPnetTTSModel(AbsESPnetModel):
                 durations_lengths=durations_lengths,
             )
         if self.energy_extract is not None:
+            raise Exception()
             energy, energy_lengths = self.energy_extract(
                 speech,
                 speech_lengths,

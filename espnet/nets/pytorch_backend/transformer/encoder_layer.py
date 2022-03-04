@@ -12,6 +12,8 @@ from torch import nn
 
 from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
 
+from typing import Optional
+
 
 class EncoderLayer(nn.Module):
     """Encoder layer module.
@@ -59,7 +61,7 @@ class EncoderLayer(nn.Module):
             self.concat_linear = nn.Linear(size + size, size)
         self.stochastic_depth_rate = stochastic_depth_rate
 
-    def forward(self, x, mask, cache=None):
+    def forward(self, x, mask : Optional [ torch.Tensor ], cache : Optional [ torch.Tensor ] = None):
         """Compute encoded features.
 
         Args:
@@ -98,8 +100,10 @@ class EncoderLayer(nn.Module):
             mask = None if mask is None else mask[:, -1:, :]
 
         if self.concat_after:
-            x_concat = torch.cat((x, self.self_attn(x_q, x, x, mask)), dim=-1)
-            x = residual + stoch_layer_coeff * self.concat_linear(x_concat)
+            attn_out = self.self_attn(x_q, x, x, mask)
+            x_concat = torch.cat((x, attn_out), dim=-1)
+            x = residual # + stoch_layer_coeff * self.concat_linear(x_concat)
+            raise Exception()
         else:
             x = residual + stoch_layer_coeff * self.dropout(
                 self.self_attn(x_q, x, x, mask)

@@ -1,7 +1,6 @@
 # Copyright 2019 Shigeki Karita
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 
-import logging
 
 import numpy
 import os
@@ -115,8 +114,7 @@ def plot_multi_head_attention(
                     # for MT
                     if is_mt:
                         xtokens = data_i[ikey][iaxis]["token"].split()
-            else:
-                logging.warning("unknown name for shaping attention")
+
             fig = _plot_and_save_attention(att_w, filename, xtokens, ytokens)
             savefn(fig, filename)
 

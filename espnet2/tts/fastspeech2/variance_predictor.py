@@ -11,6 +11,7 @@ from typeguard import check_argument_types
 
 from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
 
+from typing import Optional 
 
 class VariancePredictor(torch.nn.Module):
     """Variance predictor module.
@@ -64,7 +65,7 @@ class VariancePredictor(torch.nn.Module):
             ]
         self.linear = torch.nn.Linear(n_chans, 1)
 
-    def forward(self, xs: torch.Tensor, x_masks: torch.Tensor = None) -> torch.Tensor:
+    def forward(self, xs: torch.Tensor, x_masks: Optional [ torch.Tensor ] = None) -> torch.Tensor:
         """Calculate forward propagation.
 
         Args:

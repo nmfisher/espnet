@@ -12,7 +12,7 @@ from typeguard import check_argument_types
 from espnet.nets.pytorch_backend.fastspeech.duration_predictor import (
     DurationPredictorLoss,  # noqa: H301
 )
-from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask
+from espnet.nets.pytorch_backend.tacotron2.utils import make_non_pad_mask
 
 
 class FastSpeech2Loss(torch.nn.Module):

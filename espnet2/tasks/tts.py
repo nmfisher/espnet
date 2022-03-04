@@ -1,7 +1,7 @@
 """Text-to-speech task."""
 
 import argparse
-import logging
+
 import yaml
 
 from pathlib import Path
@@ -282,7 +282,7 @@ class TTSTask(AbsTask):
             raise RuntimeError("token_list must be str or dict")
 
         vocab_size = len(token_list)
-        logging.info(f"Vocabulary size: {vocab_size }")
+        # logging.info(f"Vocabulary size: {vocab_size }")
         
         # 1. feats_extract
         if args.odim is None:
@@ -387,7 +387,6 @@ class TTSTask(AbsTask):
             ):
                 return Spectrogram2Waveform(**vocoder_conf)
             else:
-                logging.warning("Vocoder is not available. Skipped its building.")
                 return None
 
         elif str(vocoder_file).endswith(".pkl"):

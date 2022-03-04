@@ -3,8 +3,6 @@
 
 """Fastspeech2 related modules for ESPnet2."""
 
-import logging
-
 from typing import Dict
 from typing import Optional
 from typing import Sequence
@@ -20,8 +18,8 @@ from espnet.nets.pytorch_backend.conformer.encoder import (
 )
 from espnet.nets.pytorch_backend.fastspeech.duration_predictor import DurationPredictor
 from espnet.nets.pytorch_backend.fastspeech.length_regulator import LengthRegulator
-from espnet.nets.pytorch_backend.nets_utils import make_non_pad_mask
-from espnet.nets.pytorch_backend.nets_utils import make_pad_mask
+from espnet.nets.pytorch_backend.tacotron2.utils import make_non_pad_mask
+from espnet.nets.pytorch_backend.tacotron2.utils import make_pad_mask
 from espnet.nets.pytorch_backend.tacotron2.decoder import Postnet
 from espnet.nets.pytorch_backend.transformer.embedding import PositionalEncoding
 from espnet.nets.pytorch_backend.transformer.embedding import ScaledPositionalEncoding
@@ -51,10 +49,8 @@ class FastSpeech2(AbsTTS):
         https://arxiv.org/abs/2006.06873
 
     """
-
     def __init__(
         self,
-        # network structure related
         idim: int,
         odim: int,
         adim: int = 384,
@@ -84,7 +80,6 @@ class FastSpeech2(AbsTTS):
         transformer_dec_dropout_rate: float = 0.1,
         transformer_dec_positional_dropout_rate: float = 0.1,
         transformer_dec_attn_dropout_rate: float = 0.1,
-        # only for conformer
         conformer_rel_pos_type: str = "legacy",
         conformer_pos_enc_layer_type: str = "rel_pos",
         conformer_self_attn_layer_type: str = "rel_selfattn",
@@ -94,12 +89,10 @@ class FastSpeech2(AbsTTS):
         zero_triu: bool = False,
         conformer_enc_kernel_size: int = 7,
         conformer_dec_kernel_size: int = 31,
-        # duration predictor
         duration_predictor_layers: int = 2,
         duration_predictor_chans: int = 384,
         duration_predictor_kernel_size: int = 3,
         duration_predictor_dropout_rate: float = 0.1,
-        # energy predictor
         energy_predictor_layers: int = 2,
         energy_predictor_chans: int = 384,
         energy_predictor_kernel_size: int = 3,
@@ -107,7 +100,6 @@ class FastSpeech2(AbsTTS):
         energy_embed_kernel_size: int = 9,
         energy_embed_dropout: float = 0.5,
         stop_gradient_from_energy_predictor: bool = False,
-        # pitch predictor
         pitch_predictor_layers: int = 2,
         pitch_predictor_chans: int = 384,
         pitch_predictor_kernel_size: int = 3,
@@ -115,7 +107,6 @@ class FastSpeech2(AbsTTS):
         pitch_embed_kernel_size: int = 9,
         pitch_embed_dropout: float = 0.5,
         stop_gradient_from_pitch_predictor: bool = False,
-        # extra embedding related
         spks: Optional[int] = None,
         langs: Optional[int] = None,
         spk_embed_dim: Optional[int] = None,
@@ -129,7 +120,6 @@ class FastSpeech2(AbsTTS):
         gst_conv_stride: int = 2,
         gst_gru_layers: int = 1,
         gst_gru_units: int = 128,
-        # training related
         init_type: str = "xavier_uniform",
         init_enc_alpha: float = 1.0,
         init_dec_alpha: float = 1.0,
@@ -234,7 +224,6 @@ class FastSpeech2(AbsTTS):
         assert check_argument_types()
         super().__init__()
 
-        # store hyperparameters
         self.idim = idim
         self.odim = odim
         self.eos = idim - 1
@@ -246,32 +235,19 @@ class FastSpeech2(AbsTTS):
         self.use_scaled_pos_enc = use_scaled_pos_enc
         self.use_gst = use_gst
 
-        # use idx 0 as padding idx
         self.padding_idx = 0
 
-        # get positional encoding class
         pos_enc_class = (
             ScaledPositionalEncoding if self.use_scaled_pos_enc else PositionalEncoding
         )
 
-        # check relative positional encoding compatibility
         if "conformer" in [encoder_type, decoder_type]:
             if conformer_rel_pos_type == "legacy":
                 if conformer_pos_enc_layer_type == "rel_pos":
                     conformer_pos_enc_layer_type = "legacy_rel_pos"
-                    logging.warning(
-                        "Fallback to conformer_pos_enc_layer_type = 'legacy_rel_pos' "
-                        "due to the compatibility. If you want to use the new one, "
-                        "please use conformer_pos_enc_layer_type = 'latest'."
-                    )
                 if conformer_self_attn_layer_type == "rel_selfattn":
                     conformer_self_attn_layer_type = "legacy_rel_selfattn"
-                    logging.warning(
-                        "Fallback to "
-                        "conformer_self_attn_layer_type = 'legacy_rel_selfattn' "
-                        "due to the compatibility. If you want to use the new one, "
-                        "please use conformer_pos_enc_layer_type = 'latest'."
-                    )
+
             elif conformer_rel_pos_type == "latest":
                 assert conformer_pos_enc_layer_type != "legacy_rel_pos"
                 assert conformer_self_attn_layer_type != "legacy_rel_selfattn"
@@ -349,17 +325,6 @@ class FastSpeech2(AbsTTS):
         if langs is not None and langs > 1:
             self.langs = langs
             self.lid_emb = torch.nn.Embedding(langs, adim)
-
-        # define additional projection for speaker embedding
-#        self.spk_embed_dim = None
-#        if spk_embed_dim is not None and spk_embed_dim > 0:
-#            self.spk_embed_dim = spk_embed_dim
-#            self.spk_embed_integration_type = spk_embed_integration_type
-#        if self.spk_embed_dim is not None:
-#            if self.spk_embed_integration_type == "add":
-#                self.projection = torch.nn.Linear(self.spk_embed_dim, adim)
-#            else:
-#                self.projection = torch.nn.Linear(adim + self.spk_embed_dim, adim)
 
         # define duration predictor
         self.duration_predictor = DurationPredictor(
@@ -534,7 +499,6 @@ class FastSpeech2(AbsTTS):
         pitch = pitch[:, : pitch_lengths.max()]  # for data-parallel
         energy = energy[:, : energy_lengths.max()]  # for data-parallel
 
-        
 
         batch_size = text.size(0)
 
@@ -562,6 +526,9 @@ class FastSpeech2(AbsTTS):
             lids=lids,
             is_inference=False,
         )
+
+        after_outs.detach().cpu().numpy().tofile("/tmp/numpy.pcm")
+
 
         # modify mod part of groundtruth
         if self.reduction_factor > 1:
@@ -629,17 +596,12 @@ class FastSpeech2(AbsTTS):
         lids: Optional[torch.Tensor] = None,
         is_inference: bool = False,
         alpha: float = 1.0,
-    ) -> Sequence[torch.Tensor]:
+    ) -> Tuple [ torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor ]:
         # forward encoder
         x_masks = self._source_mask(ilens)
         
         hs, _ = self.encoder(xs, x_masks)  # (B, T_text, adim)
         
-        # integrate with GST
-        if self.use_gst:
-            style_embs = self.gst(ys)
-            hs = hs + style_embs.unsqueeze(1)
-
         # integrate with SID and LID embeddings
         if self.spks is not None:
             sid_embs = self.sid_emb(sids.view(-1))
@@ -647,10 +609,6 @@ class FastSpeech2(AbsTTS):
         if self.langs is not None:
             lid_embs = self.lid_emb(lids.view(-1))
             hs = hs + lid_embs.unsqueeze(1)
-
-        # integrate speaker embedding
-#        if self.spk_embed_dim is not None:
-#            hs = self._integrate_with_spk_embed(hs, spembs)
 
         # forward duration predictor and variance predictors
         d_masks = make_pad_mask(ilens).to(xs.device)
@@ -670,10 +628,13 @@ class FastSpeech2(AbsTTS):
             p_embs = self.pitch_embed(p_outs.transpose(1, 2)).transpose(1, 2)
             e_embs = self.energy_embed(e_outs.transpose(1, 2)).transpose(1, 2)
             hs = hs + e_embs + p_embs
-            hs = self.length_regulator(hs, d_outs, alpha)  # (B, T_feats, adim)
+            hs = self.length_regulator(hs, d_outs, alpha, True)  # (B, T_feats, adim)
         else:
             d_outs = self.duration_predictor(hs, d_masks)
             # use groundtruth in training
+            ps = torch.jit._unwrap_optional(ps)
+            es = torch.jit._unwrap_optional(es)
+            ds = torch.jit._unwrap_optional(ds)
             p_embs = self.pitch_embed(ps.transpose(1, 2)).transpose(1, 2)
             e_embs = self.energy_embed(es.transpose(1, 2)).transpose(1, 2)
             
@@ -683,12 +644,13 @@ class FastSpeech2(AbsTTS):
         # forward decoder
         if olens is not None and not is_inference:
             if self.reduction_factor > 1:
-                olens_in = olens.new([olen // self.reduction_factor for olen in olens])
+                olens_in = torch.tensor([olen // self.reduction_factor for olen in olens]).to(olens.device)
             else:
                 olens_in = olens
             h_masks = self._source_mask(olens_in)
         else:
             h_masks = None
+        
         zs, _ = self.decoder(hs, h_masks)  # (B, T_feats, adim)
         before_outs = self.feat_out(zs).view(
             zs.size(0), -1, self.odim
@@ -704,19 +666,71 @@ class FastSpeech2(AbsTTS):
 
         return before_outs, after_outs, d_outs, p_outs, e_outs
 
-    def inference(
+    def _inference(
         self,
         text: torch.Tensor,
         feats: Optional[torch.Tensor] = None,
         durations: Optional[torch.Tensor] = None,
-        spembs: torch.Tensor = None,
         sids: Optional[torch.Tensor] = None,
         lids: Optional[torch.Tensor] = None,
         pitch: Optional[torch.Tensor] = None,
         energy: Optional[torch.Tensor] = None,
         alpha: float = 1.0,
         use_teacher_forcing: bool = False,
-    ) -> Dict[str, torch.Tensor]:
+    ) -> Tuple[torch.Tensor,torch.Tensor,torch.Tensor,torch.Tensor,torch.Tensor]:
+
+        x, y = text, feats
+        d, p, e = durations, pitch, energy
+
+        # add eos at the last of sequence
+        # x = F.pad(x, [0, 1], "constant", self.eos)
+
+        # setup batch axis
+        ilens = torch.tensor([x.shape[0]], dtype=torch.long, device=x.device)
+        xs, ys = x.unsqueeze(0), None
+        # if y is not None:
+        #     ys = y.unsqueeze(0)
+        
+        
+        # if use_teacher_forcing:
+        #     raise Exception()
+        #     # use groundtruth of duration, pitch, and energy
+        #     ds, ps, es = d.unsqueeze(0), p.unsqueeze(0), e.unsqueeze(0)
+        #     _, outs, d_outs, p_outs, e_outs = self._forward(
+        #         xs,
+        #         ilens,
+        #         ys,
+        #         ds=ds,
+        #         ps=ps,
+        #         es=es,
+        #         spembs=spembs,
+        #         sids=sids,
+        #         lids=lids,
+        #     )  # (1, T_feats, odim)
+        # else:
+        before_outs, outs, d_outs, p_outs, e_outs = self._forward(
+            xs,
+            ilens,
+            ys,
+            sids=sids,
+            lids=lids,
+            is_inference=True,
+            alpha=alpha,
+        )  # (1, T_feats, odim)
+        return before_outs, outs, d_outs, p_outs, e_outs
+
+    def inference(
+        self,
+        text: torch.Tensor,
+        feats: Optional[torch.Tensor] = None,
+        durations: Optional[torch.Tensor] = None,
+        sids: Optional[torch.Tensor] = None,
+        lids: Optional[torch.Tensor] = None,
+        pitch: Optional[torch.Tensor] = None,
+        energy: Optional[torch.Tensor] = None,
+        alpha: float = 1.0,
+        use_teacher_forcing: bool = False,
+    ) -> Dict[str,torch.Tensor]:
         """Generate the sequence of features given the sequences of characters.
 
         Args:
@@ -740,53 +754,33 @@ class FastSpeech2(AbsTTS):
                 * energy (Tensor): Energy sequence (T_text + 1,).
 
         """
-        x, y = text, feats
-        spemb, d, p, e = spembs, durations, pitch, energy
-
-        # add eos at the last of sequence
-        # x = F.pad(x, [0, 1], "constant", self.eos)
-
-        # setup batch axis
-        ilens = torch.tensor([x.shape[0]], dtype=torch.long, device=x.device)
-        xs, ys = x.unsqueeze(0), None
-        if y is not None:
-            ys = y.unsqueeze(0)
-        if spemb is not None:
-            spembs = spemb.unsqueeze(0)
-        use_teacher_forcing = True
-        
-        if use_teacher_forcing:
-            # use groundtruth of duration, pitch, and energy
-            ds, ps, es = d.unsqueeze(0), p.unsqueeze(0), e.unsqueeze(0)
-            _, outs, d_outs, p_outs, e_outs = self._forward(
-                xs,
-                ilens,
-                ys,
-                ds=ds,
-                ps=ps,
-                es=es,
-                spembs=spembs,
-                sids=sids,
-                lids=lids,
-            )  # (1, T_feats, odim)
-        else:
-            _, outs, d_outs, p_outs, e_outs = self._forward(
-                xs,
-                ilens,
-                ys,
-                spembs=spembs,
-                sids=sids,
-                lids=lids,
-                is_inference=True,
-                alpha=alpha,
-            )  # (1, T_feats, odim)
+        before_outs, outs, d_outs, p_outs, e_outs = self._inference(
+          text,
+          feats,
+          durations,
+          sids,
+          lids,
+          pitch,
+          energy,
+          alpha,
+          use_teacher_forcing
+        )
 
         return dict(
-            feat_gen=outs[0],
+            feat_gen=before_outs[0],
             duration=d_outs[0],
             pitch=p_outs[0],
             energy=e_outs[0],
         )
+
+    def export(
+        self,
+        text: torch.Tensor,
+    ) -> Tuple[torch.Tensor,torch.Tensor]:
+      before_outs, outs, d_outs, p_outs, e_outs = self._inference(
+          text,
+        )
+      return outs, d_outs
 
     def _integrate_with_spk_embed(
         self, hs: torch.Tensor, spembs: torch.Tensor
@@ -832,7 +826,7 @@ class FastSpeech2(AbsTTS):
                      [1, 1, 1, 0, 0]]], dtype=torch.uint8)
 
         """
-        x_masks = make_non_pad_mask(ilens).to(next(self.parameters()).device)
+        x_masks = make_non_pad_mask(ilens).to(ilens.device)
         return x_masks.unsqueeze(-2)
 
     def _reset_parameters(

@@ -12,6 +12,8 @@ import numpy
 import torch
 from torch import nn
 
+from typing import Optional 
+
 
 class MultiHeadedAttention(nn.Module):
     """Multi-Head Attention layer.
@@ -34,7 +36,7 @@ class MultiHeadedAttention(nn.Module):
         self.linear_k = nn.Linear(n_feat, n_feat)
         self.linear_v = nn.Linear(n_feat, n_feat)
         self.linear_out = nn.Linear(n_feat, n_feat)
-        self.attn = None
+        self.attn : torch.Tensor = torch.zeros(1,dtype=torch.float32)
         self.dropout = nn.Dropout(p=dropout_rate)
 
     def forward_qkv(self, query, key, value):
@@ -61,7 +63,7 @@ class MultiHeadedAttention(nn.Module):
 
         return q, k, v
 
-    def forward_attention(self, value, scores, mask):
+    def forward_attention(self, value, scores, mask : Optional [ torch.Tensor ]):
         """Compute attention context vector.
 
         Args:
@@ -77,9 +79,10 @@ class MultiHeadedAttention(nn.Module):
         n_batch = value.size(0)
         if mask is not None:
             mask = mask.unsqueeze(1).eq(0)  # (batch, 1, *, time2)
-            min_value = float(
-                numpy.finfo(torch.tensor(0, dtype=scores.dtype).numpy().dtype).min
-            )
+            min_value = float(-math.inf)
+            # min_value = float(
+            #     numpy.finfo(torch.tensor(0, dtype=scores.dtype).numpy().dtype).min
+            # )
             scores = scores.masked_fill(mask, min_value)
             self.attn = torch.softmax(scores, dim=-1).masked_fill(
                 mask, 0.0
@@ -95,7 +98,7 @@ class MultiHeadedAttention(nn.Module):
 
         return self.linear_out(x)  # (batch, time1, d_model)
 
-    def forward(self, query, key, value, mask):
+    def forward(self, query, key, value, mask : Optional [ torch.Tensor ]):
         """Compute scaled dot product attention.
 
         Args:

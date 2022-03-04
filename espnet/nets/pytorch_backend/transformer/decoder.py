@@ -6,8 +6,6 @@
 
 """Decoder definition."""
 
-import logging
-
 from typing import Any
 from typing import List
 from typing import Tuple
@@ -27,7 +25,7 @@ from espnet.nets.pytorch_backend.transformer.mask import subsequent_mask
 from espnet.nets.pytorch_backend.transformer.positionwise_feed_forward import (
     PositionwiseFeedForward,  # noqa: H301
 )
-from espnet.nets.pytorch_backend.transformer.repeat import repeat
+# from espnet.nets.pytorch_backend.transformer.repeat import repeat
 from espnet.nets.scorer_interface import BatchScorerInterface
 
 
@@ -124,7 +122,7 @@ class Decoder(BatchScorerInterface, torch.nn.Module):
 
         # self-attention module definition
         if selfattention_layer_type == "selfattn":
-            logging.info("decoder self-attention layer type = self-attention")
+            
             decoder_selfattn_layer = MultiHeadedAttention
             decoder_selfattn_layer_args = [
                 (
@@ -134,7 +132,6 @@ class Decoder(BatchScorerInterface, torch.nn.Module):
                 )
             ] * num_blocks
         elif selfattention_layer_type == "lightconv":
-            logging.info("decoder self-attention layer type = lightweight convolution")
             decoder_selfattn_layer = LightweightConvolution
             decoder_selfattn_layer_args = [
                 (
@@ -148,10 +145,7 @@ class Decoder(BatchScorerInterface, torch.nn.Module):
                 for lnum in range(num_blocks)
             ]
         elif selfattention_layer_type == "lightconv2d":
-            logging.info(
-                "decoder self-attention layer "
-                "type = lightweight convolution 2-dimensional"
-            )
+            
             decoder_selfattn_layer = LightweightConvolution2D
             decoder_selfattn_layer_args = [
                 (
@@ -165,7 +159,6 @@ class Decoder(BatchScorerInterface, torch.nn.Module):
                 for lnum in range(num_blocks)
             ]
         elif selfattention_layer_type == "dynamicconv":
-            logging.info("decoder self-attention layer type = dynamic convolution")
             decoder_selfattn_layer = DynamicConvolution
             decoder_selfattn_layer_args = [
                 (
@@ -179,9 +172,7 @@ class Decoder(BatchScorerInterface, torch.nn.Module):
                 for lnum in range(num_blocks)
             ]
         elif selfattention_layer_type == "dynamicconv2d":
-            logging.info(
-                "decoder self-attention layer type = dynamic convolution 2-dimensional"
-            )
+
             decoder_selfattn_layer = DynamicConvolution2D
             decoder_selfattn_layer_args = [
                 (
@@ -195,11 +186,12 @@ class Decoder(BatchScorerInterface, torch.nn.Module):
                 for lnum in range(num_blocks)
             ]
 
-        self.decoders = repeat(
-            num_blocks,
-            lambda lnum: DecoderLayer(
+        self.decoders = torch.nn.ModuleList()
+        for i in range(num_blocks):
+            self.decoders += [
+              DecoderLayer(
                 attention_dim,
-                decoder_selfattn_layer(*decoder_selfattn_layer_args[lnum]),
+                decoder_selfattn_layer(*decoder_selfattn_layer_args[i]),
                 MultiHeadedAttention(
                     attention_heads, attention_dim, src_attention_dropout_rate
                 ),
@@ -207,8 +199,8 @@ class Decoder(BatchScorerInterface, torch.nn.Module):
                 dropout_rate,
                 normalize_before,
                 concat_after,
-            ),
-        )
+            )]
+        
         self.selfattention_layer_type = selfattention_layer_type
         if self.normalize_before:
             self.after_norm = LayerNorm(attention_dim)
@@ -291,9 +283,6 @@ class Decoder(BatchScorerInterface, torch.nn.Module):
         ys_mask = subsequent_mask(len(ys), device=x.device).unsqueeze(0)
         if self.selfattention_layer_type != "selfattn":
             # TODO(karita): implement cache
-            logging.warning(
-                f"{self.selfattention_layer_type} does not support cached decoding."
-            )
             state = None
         logp, state = self.forward_one_step(
             ys.unsqueeze(0), ys_mask, x.unsqueeze(0), cache=state

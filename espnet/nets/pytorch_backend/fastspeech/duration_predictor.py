@@ -6,10 +6,12 @@
 
 """Duration predictor related modules."""
 
+from xmlrpc.client import Boolean
 import torch
 
 from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
 
+from typing import Optional
 
 class DurationPredictor(torch.nn.Module):
     """Duration predictor module.
@@ -65,8 +67,8 @@ class DurationPredictor(torch.nn.Module):
             ]
         self.linear = torch.nn.Linear(n_chans, 1)
 
-    def _forward(self, xs, x_masks=None, is_inference=False):
-        xs = xs.transpose(1, -1)  # (B, idim, Tmax)
+    def _forward(self, xs, x_masks: Optional [ torch.Tensor ]=None, is_inference:Boolean=False):
+        xs = xs.transpose(1, 2)  # (B, idim, Tmax)
         for f in self.conv:
             xs = f(xs)  # (B, C, Tmax)
 
@@ -75,16 +77,15 @@ class DurationPredictor(torch.nn.Module):
 
         if is_inference:
             # NOTE: calculate in linear domain
-            xs = torch.clamp(
-                torch.round(xs.exp() - self.offset), min=0
-            ).long()  # avoid negative value
+            foo = torch.round(xs.exp() - self.offset).long()
+            xs = torch.clamp(foo, min=1)  # avoid negative value
 
         if x_masks is not None:
             xs = xs.masked_fill(x_masks, 0.0)
-
+        
         return xs
 
-    def forward(self, xs, x_masks=None):
+    def forward(self, xs, x_masks: Optional [ torch.Tensor]=None):
         """Calculate forward propagation.
 
         Args:
@@ -98,7 +99,7 @@ class DurationPredictor(torch.nn.Module):
         """
         return self._forward(xs, x_masks, False)
 
-    def inference(self, xs, x_masks=None):
+    def inference(self, xs, x_masks:Optional [ torch.Tensor] =None):
         """Inference duration.
 
         Args:

@@ -5,13 +5,13 @@
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 
 """Length regulator related modules."""
+from xmlrpc.client import Boolean
 
 import logging
 
 import torch
 
 from espnet.nets.pytorch_backend.nets_utils import pad_list
-
 
 class LengthRegulator(torch.nn.Module):
     """Length regulator module for feed-forward Transformer.
@@ -37,7 +37,7 @@ class LengthRegulator(torch.nn.Module):
         super().__init__()
         self.pad_value = pad_value
 
-    def forward(self, xs, ds, alpha=1.0):
+    def forward(self, xs, ds, alpha:float=1.0, is_inference:Boolean=False):
         """Calculate forward propagation.
 
         Args:
@@ -54,14 +54,20 @@ class LengthRegulator(torch.nn.Module):
             ds = torch.round(ds.float() * alpha).long()
 
         if ds.sum() == 0:
-            logging.warning(
-                "predicted durations includes all 0 sequences. "
-                "fill the first element with 1."
-            )
             # NOTE(kan-bayashi): This case must not be happened in teacher forcing.
             #   It will be happened in inference with a bad duration predictor.
             #   So we do not need to care the padded sequence case here.
             ds[ds.sum(dim=1).eq(0)] = 1
-
+        
+        if is_inference:
+          repeated = torch.zeros(xs.size(0), ds.sum(), xs.size(2))
+        
+          idx = 0
+          for idx_d in range(len(ds)):
+            d = ds[0,idx_d]
+            repeated[0,idx:idx+d,:] = xs[0,idx_d,:]
+            idx += d
+          return repeated  
+        
         repeat = [torch.repeat_interleave(x, d, dim=0) for x, d in zip(xs, ds)]
         return pad_list(repeat, self.pad_value)

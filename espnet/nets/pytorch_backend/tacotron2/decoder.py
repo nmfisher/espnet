@@ -261,8 +261,8 @@ class Postnet(torch.nn.Module):
             Tensor: Batch of padded output tensor. (B, odim, Tmax).
 
         """
-        for i in six.moves.range(len(self.postnet)):
-            xs = self.postnet[i](xs)
+        for layer in self.postnet:
+            xs = layer(xs)
         return xs
 
 

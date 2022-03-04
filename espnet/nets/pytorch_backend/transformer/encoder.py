@@ -3,7 +3,6 @@
 
 """Encoder definition."""
 
-import logging
 import torch
 
 from espnet.nets.pytorch_backend.nets_utils import rename_state_dict
@@ -21,11 +20,12 @@ from espnet.nets.pytorch_backend.transformer.multi_layer_conv import MultiLayere
 from espnet.nets.pytorch_backend.transformer.positionwise_feed_forward import (
     PositionwiseFeedForward,  # noqa: H301
 )
-from espnet.nets.pytorch_backend.transformer.repeat import repeat
+# from espnet.nets.pytorch_backend.transformer.repeat import repeat
 from espnet.nets.pytorch_backend.transformer.subsampling import Conv2dSubsampling
 from espnet.nets.pytorch_backend.transformer.subsampling import Conv2dSubsampling6
 from espnet.nets.pytorch_backend.transformer.subsampling import Conv2dSubsampling8
 
+from typing import Optional
 
 def _pre_hook(
     state_dict,
@@ -169,7 +169,6 @@ class Encoder(torch.nn.Module):
             "rel_selfattn",
             "legacy_rel_selfattn",
         ]:
-            logging.info("encoder self-attention layer type = self-attention")
             encoder_selfattn_layer = MultiHeadedAttention
             encoder_selfattn_layer_args = [
                 (
@@ -179,7 +178,6 @@ class Encoder(torch.nn.Module):
                 )
             ] * num_blocks
         elif selfattention_layer_type == "lightconv":
-            logging.info("encoder self-attention layer type = lightweight convolution")
             encoder_selfattn_layer = LightweightConvolution
             encoder_selfattn_layer_args = [
                 (
@@ -193,10 +191,6 @@ class Encoder(torch.nn.Module):
                 for lnum in range(num_blocks)
             ]
         elif selfattention_layer_type == "lightconv2d":
-            logging.info(
-                "encoder self-attention layer "
-                "type = lightweight convolution 2-dimensional"
-            )
             encoder_selfattn_layer = LightweightConvolution2D
             encoder_selfattn_layer_args = [
                 (
@@ -210,7 +204,7 @@ class Encoder(torch.nn.Module):
                 for lnum in range(num_blocks)
             ]
         elif selfattention_layer_type == "dynamicconv":
-            logging.info("encoder self-attention layer type = dynamic convolution")
+
             encoder_selfattn_layer = DynamicConvolution
             encoder_selfattn_layer_args = [
                 (
@@ -224,9 +218,6 @@ class Encoder(torch.nn.Module):
                 for lnum in range(num_blocks)
             ]
         elif selfattention_layer_type == "dynamicconv2d":
-            logging.info(
-                "encoder self-attention layer type = dynamic convolution 2-dimensional"
-            )
             encoder_selfattn_layer = DynamicConvolution2D
             encoder_selfattn_layer_args = [
                 (
@@ -242,18 +233,18 @@ class Encoder(torch.nn.Module):
         else:
             raise NotImplementedError(selfattention_layer_type)
 
-        self.encoders = repeat(
-            num_blocks,
-            lambda lnum: EncoderLayer(
+        self.encoders = torch.nn.ModuleList()
+        for i in range(num_blocks):
+            self.encoders += [
+            EncoderLayer(
                 attention_dim,
-                encoder_selfattn_layer(*encoder_selfattn_layer_args[lnum]),
+                encoder_selfattn_layer(*encoder_selfattn_layer_args[i]),
                 positionwise_layer(*positionwise_layer_args),
                 dropout_rate,
                 normalize_before,
                 concat_after,
-                stochastic_depth_rate * float(1 + lnum) / num_blocks,
-            ),
-        )
+                stochastic_depth_rate * float(1 + i) / num_blocks,
+            ) ]
         if self.normalize_before:
             self.after_norm = LayerNorm(attention_dim)
 
@@ -297,7 +288,7 @@ class Encoder(torch.nn.Module):
             raise NotImplementedError("Support only linear or conv1d.")
         return positionwise_layer, positionwise_layer_args
 
-    def forward(self, xs, masks):
+    def forward(self, xs, masks:Optional [torch.Tensor]):
         """Encode input sequence.
 
         Args:
@@ -309,16 +300,21 @@ class Encoder(torch.nn.Module):
             torch.Tensor: Mask tensor (#batch, time).
 
         """
-        if isinstance(
-            self.embed,
-            (Conv2dSubsampling, Conv2dSubsampling6, Conv2dSubsampling8, VGG2L),
-        ):
-            xs, masks = self.embed(xs, masks)
-        else:
-            xs = self.embed(xs)
+        # if isinstance(
+        #     self.embed,
+        #     (Conv2dSubsampling, Conv2dSubsampling6, Conv2dSubsampling8, VGG2L),
+        # ):
+        #     # xs, masks = self.embed(xs, masks)
+        #     raise Exception()
+        # else:
+        print(xs.size())
+        xs = self.embed(xs)
+        print(xs.size())
+        return xs,xs
 
         if self.intermediate_layers is None:
-            xs, masks = self.encoders(xs, masks)
+            for enc in self.encoders:
+              xs, masks = enc(xs, masks)
         else:
             intermediate_outputs = []
             for layer_idx, encoder_layer in enumerate(self.encoders):

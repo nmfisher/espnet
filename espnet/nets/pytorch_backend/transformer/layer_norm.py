@@ -9,7 +9,7 @@
 import torch
 
 
-class LayerNorm(torch.nn.LayerNorm):
+class LayerNorm(torch.nn.Module):
     """Layer normalization module.
 
     Args:
@@ -20,8 +20,9 @@ class LayerNorm(torch.nn.LayerNorm):
 
     def __init__(self, nout, dim=-1):
         """Construct an LayerNorm object."""
-        super(LayerNorm, self).__init__(nout, eps=1e-12)
+        super(LayerNorm, self).__init__()
         self.dim = dim
+        self.ln = torch.nn.LayerNorm(nout, eps=1e-12)
 
     def forward(self, x):
         """Apply layer normalization.
@@ -34,9 +35,6 @@ class LayerNorm(torch.nn.LayerNorm):
 
         """
         if self.dim == -1:
-            return super(LayerNorm, self).forward(x)
-        return (
-            super(LayerNorm, self)
-            .forward(x.transpose(self.dim, -1))
-            .transpose(self.dim, -1)
-        )
+            return self.ln(x)
+        return self.ln(x.transpose(self.dim, -1)).transpose(self.dim, -1)
+        

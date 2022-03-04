@@ -522,14 +522,8 @@ if ! "${skip_train}"; then
             _opts+="--config ${train_config} "
         fi
 
-        _scp=wav.scp
-        if [[ "${audio_format}" == *ark* ]]; then
-            _type=kaldi_ark
-        else
-            # "sound" supports "wav", "flac", etc.
-            _type=sound
-        fi
-
+        _scp=feats.scp
+        _type=kaldi_ark
 
         if [ -n "${teacher_dumpdir}" ]; then
             _teacher_train_dir="${teacher_dumpdir}/${train_set}"

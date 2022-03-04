@@ -8,6 +8,7 @@ from typing import Dict
 import numpy as np
 import torch
 
+from typing import List 
 
 def to_device(m, x):
     """Send tensor into the device of the module.
@@ -31,7 +32,7 @@ def to_device(m, x):
     return x.to(device)
 
 
-def pad_list(xs, pad_value):
+def pad_list(xs : List [ torch.Tensor ], pad_value : float):
     """Perform padding for the list of tensors.
 
     Args:
@@ -52,8 +53,10 @@ def pad_list(xs, pad_value):
 
     """
     n_batch = len(xs)
-    max_len = max(x.size(0) for x in xs)
-    pad = xs[0].new(n_batch, max_len, *xs[0].size()[1:]).fill_(pad_value)
+    max_len = max([x.size(0) for x in xs])
+
+    sizes = [n_batch, max_len] + list(xs[0].size()[1:])
+    pad = xs[0].new_full(sizes,pad_value)
 
     for i in range(n_batch):
         pad[i, : xs[i].size(0)] = xs[i]

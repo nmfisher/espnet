@@ -454,9 +454,11 @@ def inference(
 
             key = keys[0]
             insize = next(iter(batch.values())).size(0) + 1
+            
             if output_dict.get("feat_gen") is not None:
                 # standard text2mel model case
                 feat_gen = output_dict["feat_gen"]
+                feat_gen.detach().cpu().numpy().tofile("/tmp/feat_gen.pcm")
                 logging.info(
                     "inference speed = {:.1f} frames / sec.".format(
                         int(feat_gen.size(0)) / (time.perf_counter() - start_time)
@@ -465,7 +467,7 @@ def inference(
                 logging.info(f"{key} (size:{insize}->{feat_gen.size(0)})")
                 if feat_gen.size(0) == insize * maxlenratio:
                     logging.warning(f"output length reaches maximum length ({key}).")
-
+                
                 norm_writer[key] = output_dict["feat_gen"].cpu().numpy()
                 shape_writer.write(
                     f"{key} " + ",".join(map(str, output_dict["feat_gen"].shape)) + "\n"
