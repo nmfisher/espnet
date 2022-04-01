@@ -300,14 +300,14 @@ class Encoder(torch.nn.Module):
             torch.Tensor: Mask tensor (#batch, time).
 
         """
-        if isinstance(
-            self.embed,
-            (Conv2dSubsampling, Conv2dSubsampling6, Conv2dSubsampling8, VGG2L),
-        ):
-            # xs, masks = self.embed(xs, masks)
-            raise Exception()
-        else:
-            xs = self.embed(xs)
+        # if isinstance(
+        #     self.embed,
+        #     (Conv2dSubsampling, Conv2dSubsampling6, Conv2dSubsampling8, VGG2L),
+        # ):
+        #     # xs, masks = self.embed(xs, masks)
+        #     raise Exception()
+        # else:
+        xs = self.embed(xs)
 
         if self.intermediate_layers is None:
             for enc in self.encoders:
