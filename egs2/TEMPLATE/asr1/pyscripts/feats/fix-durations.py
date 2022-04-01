@@ -51,8 +51,11 @@ def get_parser():
 
 def fix(feats_file, durations_file, durations_out_file):
   with open(durations_out_file, "w") as dur_writer:
+    print(f"Fixing durations based on feature file {feats_file} and durations file {durations_file}")
     with ReadHelper("scp:" + feats_file) as feats_reader, ReadHelper("ark,t:" + durations_file) as dur_reader:
-      for (utt_id, feats), (_, durations) in zip(feats_reader, dur_reader):
+      for (utt_id, feats), (utt_id2, durations) in zip(feats_reader, dur_reader):
+        if utt_id != utt_id2:
+          raise Exception(f"Utterance ID mismatch : {utt_id} vs {utt_id2}")
         dsum = durations.sum()
         if dsum < feats.shape[0]:
           durations[-1] += (feats.shape[0] - dsum)
@@ -60,6 +63,7 @@ def fix(feats_file, durations_file, durations_out_file):
           durations[0] -= (dsum - feats.shape[0])
         assert(durations.sum() == feats.shape[0])
         dur_writer.write("%s %s\n" % (utt_id, " ".join([str(int(x)) for x in durations])))
+        print(f"Fixed durations for utterance {utt_id}")
 
 def main():
     parser = get_parser()
