@@ -52,16 +52,10 @@ if __name__ == "__main__":
     logging.info("Generate ONNX models")
     with torch.no_grad():
         
-        # preprocessing = text2speech.preprocess_fn
-        # model_tts = text2speech.tts
-        # model = HQSS(20,20,zoneout_rate=0.0)
         model = tts.model.tts
         model.eval()
 
         # text: torch.Tensor,
-        # durations: Optional[torch.Tensor] = None,
-        # pitch: Optional[torch.Tensor] = None,
-        # sids: Optional[torch.Tensor] = None,
         inputs = (
           torch.tensor([2, 15, 26, 39, 9,8, 10, 27, 3,11, 2],dtype=torch.int).to(device), 
         )
