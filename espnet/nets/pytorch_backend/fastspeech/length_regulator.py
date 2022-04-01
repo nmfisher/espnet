@@ -60,14 +60,14 @@ class LengthRegulator(torch.nn.Module):
             ds[ds.sum(dim=1).eq(0)] = 1
         
         if is_inference:
-          repeated = torch.zeros(xs.size(0), ds.sum(), xs.size(2))
-        
-          idx = 0
-          for idx_d in range(len(ds)):
-            d = ds[0,idx_d]
-            repeated[0,idx:idx+d,:] = xs[0,idx_d,:]
-            idx += d
-          return repeated  
+            repeated = torch.zeros(xs.size(0), ds.sum(), xs.size(2))
+            
+            idx = 0
+            for idx_d in range(ds.size(1)):
+                d = ds[0,idx_d]
+                repeated[0,idx:idx+d,:] = xs[0,idx_d,:]
+                idx += d
+            return repeated  
         
         repeat = [torch.repeat_interleave(x, d, dim=0) for x, d in zip(xs, ds)]
         return pad_list(repeat, self.pad_value)
