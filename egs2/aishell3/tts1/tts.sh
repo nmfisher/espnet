@@ -502,7 +502,6 @@ if ! "${skip_data_prep}"; then
 else
     log "Skip the stages for data preparation"
 fi
-
 # ========================== Data preparation is done here. ==========================
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
   ./scripts/feats/make_bfcc.sh ${data_feats}/${train_set}
@@ -513,7 +512,7 @@ if ! "${skip_train}"; then
     if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
         _train_dir="${data_feats}/${train_set}"
         _valid_dir="${data_feats}/${valid_set}"
-        log "Stage 5: TTS collect stats: train_set=${_train_dir}, valid_set=${_valid_dir}"
+        log "Stage 6: TTS collect stats: train_set=${_train_dir}, valid_set=${_valid_dir}"
 
         _opts=
         if [ -n "${train_config}" ]; then
@@ -529,7 +528,6 @@ if ! "${skip_train}"; then
             _teacher_train_dir="${teacher_dumpdir}/${train_set}"
             _teacher_valid_dir="${teacher_dumpdir}/${valid_set}"
 
-            ./scripts/feats/fix_durations.sh ${data_feats}/${train_set}/feats.scp ${data_feats}/${valid_set}/feats.scp  ${_teacher_train_dir}/durations "${data_feats}/${train_set}/durations" ${_teacher_valid_dir}/durations "${data_feats}/${valid_set}/durations"
 
             _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/durations,durations,text_int "
             _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/durations,durations,text_int "
@@ -537,9 +535,24 @@ if ! "${skip_train}"; then
             _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/pitch,pitch,npy "
             _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/energy,energy,npy "
             _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/energy,energy,npy "
+           
+            cp ${_teacher_train_dir}/durations  ${data_feats}/${train_set}/durations
+            cp ${_teacher_valid_dir}/durations  ${data_feats}/${valid_set}/durations
 
             ./utils/fix_data_dir.sh "${data_feats}/${train_set}"
             ./utils/fix_data_dir.sh "${data_feats}/${valid_set}"
+ 
+            ./scripts/feats/fix_durations.sh \
+                    ${data_feats}/${train_set}/feats.scp \
+                    ${data_feats}/${valid_set}/feats.scp \
+                    ${data_feats}/${train_set}/durations \
+                    "${data_feats}/${train_set}/durations_fixed" \
+                    ${data_feats}/${valid_set}/durations \
+                    "${data_feats}/${valid_set}/durations_fixed"
+
+            mv "${data_feats}/${train_set}/durations_fixed" "${data_feats}/${train_set}/durations"
+
+            mv "${data_feats}/${valid_set}/durations_fixed" "${data_feats}/${valid_set}/durations"
 
             ./scripts/feats/extract_f0.sh \
                ${data_feats}/${train_set}/wav.scp \
