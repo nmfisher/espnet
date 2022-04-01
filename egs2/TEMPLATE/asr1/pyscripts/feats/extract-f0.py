@@ -86,8 +86,12 @@ def get_parser():
 
 
 def _open(path):
+    print(f"Opening file at path {path}")
     with open(path, "r") as infile:
+        i = 0
         for line in infile.readlines():
+            print(f"Reading line number {i}")
+            i += 1
             split = line.strip().split(" ")
             yield (split[0], split[1:])
 
@@ -100,10 +104,14 @@ def extract(wavs, durations, transcripts, sample_rate, hop_length):
           hop_length=hop_length,
     )
 
-    for (utt_id, path), (_, utt_durations), (_, transcript) in zip(wavs, durations, transcripts):
+    for (utt_id, path), (utt_id2, utt_durations), (utt_id3, transcript) in zip(wavs, durations, transcripts):
 
+        if utt_id2 != utt_id or utt_id3 != utt_id:
+          raise Exception(f"Utterance ID mismatch {utt_id} vs {utt_id2} vs {utt_id3}, are the wav.scp/text/durations files sorted and contain the exact same utterances in the exact same order?")
         if len(utt_durations) != len(transcript):
-          raise Exception(f"Number of phone frame durations does not match number of phones in transcript for utt {utt_id}, do the wav.scp/text/durations files all match exactly?")
+          print(utt_durations)
+          print(transcript)
+          raise Exception(f"Number of phone frame durations {len(utt_durations)} does not match number of phones in transcript {len(transcript)} for utt {utt_id}, do the wav.scp/text/durations files all match exactly?")
 
         utt_durations = [ float(x) for x in utt_durations ]
 
@@ -153,7 +161,7 @@ def extract(wavs, durations, transcripts, sample_rate, hop_length):
         if len(utt_f0) != len(transcript):
             # print(f"{path}\n transcript : {transcript}\n f0 : {utt_f0}\n DIO timestamps {t}\n phone_times {phone_times}\n original durations: {utt_durations}")
             raise Exception(f"length mismatch for {utt_id} : {len(utt_f0)} vs {len(transcript)}")
-                
+        print(f"Extracted F0 and energy for utterance {utt_id}")
         yield (utt_id, utt_f0,es)
 
 
