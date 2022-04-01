@@ -77,8 +77,12 @@ class DurationPredictor(torch.nn.Module):
 
         if is_inference:
             # NOTE: calculate in linear domain
-            foo = torch.round(xs.exp() - self.offset).long()
-            xs = torch.clamp(foo, min=1)  # avoid negative value
+            
+            xs = torch.clamp(
+                torch.round(
+                    xs.exp() - self.offset
+                ).long(),
+            min=0)  # avoid negative value
 
         if x_masks is not None:
             xs = xs.masked_fill(x_masks, 0.0)
