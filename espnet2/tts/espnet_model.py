@@ -205,18 +205,21 @@ class ESPnetTTSModel(AbsESPnetModel):
         else:
             # Use precalculated feats (feats_type != raw case)
             feats, feats_lengths = speech, speech_lengths
-        print(feats)
-        print(feats.size())
-        print(feats_lengths)
+        # print(feats)
+        # print(feats.size())
+        # print(feats_lengths)
+        if durations is None:
+            raise Exception(f"No durations passed?")
         for b in range(durations.size(0)):
         #    s = durations[b,:].sum() 
         #    if s < feats_lengths[b]:
         #        durations[b,-1] += (feats_lengths[b] - s)
         #    elif s > feats_lengths[b]:
         #        durations[b,0] -= (s - feats_lengths[b])
-          print(durations[b,:].sum())
-          print(feats_lengths[b])
-          assert(durations[b,:].sum() == feats_lengths[b])
+        #   print(durations[b,:].sum())
+        #   print(feats_lengths[b])
+            if durations[b,:].sum() != feats_lengths[b]:
+                raise Exception(f"Mismatch {durations[b,:].sum()} {feats_lengths[b]}")
 
         if self.pitch_extract is not None:
             raise Exception()

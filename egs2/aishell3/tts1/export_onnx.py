@@ -58,6 +58,7 @@ if __name__ == "__main__":
         # text: torch.Tensor,
         inputs = (
           torch.tensor([2, 15, 26, 39, 9,8, 10, 27, 3,11, 2],dtype=torch.int).to(device), 
+          torch.tensor([1],dtype=torch.int).to(device), 
         )
 
         # plain method invocation to confirm that everything works correctly outside torch.jit.script
@@ -78,7 +79,7 @@ if __name__ == "__main__":
             opset_version=14,
             do_constant_folding=False,
             verbose=True,
-            input_names=['phones'],
+            input_names=['phones','speaker_id'],
             output_names=['pcm','durations'],
             dynamic_axes={
                 'phones': {

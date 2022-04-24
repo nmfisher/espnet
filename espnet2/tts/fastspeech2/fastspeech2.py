@@ -231,7 +231,7 @@ class FastSpeech2(AbsTTS):
         self.encoder_type = encoder_type
         self.decoder_type = decoder_type
         self.stop_gradient_from_pitch_predictor = stop_gradient_from_pitch_predictor
-        self.stop_gradient_from_energy_predictor = stop_gradient_from_energy_predictor
+
         self.use_scaled_pos_enc = use_scaled_pos_enc
         self.use_gst = use_gst
 
@@ -317,6 +317,7 @@ class FastSpeech2(AbsTTS):
             )
 
         # define spk and lang embedding
+        spks = 9
         self.spks = None
         if spks is not None and spks > 1:
             self.spks = spks
@@ -353,26 +354,6 @@ class FastSpeech2(AbsTTS):
             ),
             torch.nn.Dropout(pitch_embed_dropout),
         )
-
-        # define energy predictor
-        self.energy_predictor = VariancePredictor(
-            idim=adim,
-            n_layers=energy_predictor_layers,
-            n_chans=energy_predictor_chans,
-            kernel_size=energy_predictor_kernel_size,
-            dropout_rate=energy_predictor_dropout,
-        )
-        # NOTE(kan-bayashi): We use continuous enegy + FastPitch style avg
-        self.energy_embed = torch.nn.Sequential(
-            torch.nn.Conv1d(
-                in_channels=1,
-                out_channels=adim,
-                kernel_size=energy_embed_kernel_size,
-                padding=(energy_embed_kernel_size - 1) // 2,
-            ),
-            torch.nn.Dropout(energy_embed_dropout),
-        )
-
         # define length regulator
         self.length_regulator = LengthRegulator()
 
@@ -497,8 +478,6 @@ class FastSpeech2(AbsTTS):
         feats = feats[:, : feats_lengths.max()]  # for data-parallel
         durations = durations[:, : durations_lengths.max()]  # for data-parallel
         pitch = pitch[:, : pitch_lengths.max()]  # for data-parallel
-        energy = energy[:, : energy_lengths.max()]  # for data-parallel
-
 
         batch_size = text.size(0)
 
@@ -509,26 +488,22 @@ class FastSpeech2(AbsTTS):
         #    xs[i, l] = self.eos
         ilens = text_lengths #+ 1
 
-        ys, ds, ps, es = feats, durations, pitch, energy
+        ys, ds, ps = feats, durations, pitch
         olens = feats_lengths
 
         # forward propagation
-        before_outs, after_outs, d_outs, p_outs, e_outs = self._forward(
+        before_outs, after_outs, d_outs, p_outs = self._forward(
             xs,
             ilens,
             ys,
             olens,
             ds,
             ps,
-            es,
             spembs=spembs,
             sids=sids,
             lids=lids,
             is_inference=False,
         )
-
-        after_outs.detach().cpu().numpy().tofile("/tmp/numpy.pcm")
-
 
         # modify mod part of groundtruth
         if self.reduction_factor > 1:
@@ -541,26 +516,23 @@ class FastSpeech2(AbsTTS):
             after_outs = None
 
         # calculate loss
-        l1_loss, duration_loss, pitch_loss, energy_loss = self.criterion(
+        l1_loss, duration_loss, pitch_loss = self.criterion(
             after_outs=after_outs,
             before_outs=before_outs,
             d_outs=d_outs,
             p_outs=p_outs,
-            e_outs=e_outs,
             ys=ys,
             ds=ds,
             ps=ps,
-            es=es,
             ilens=ilens,
             olens=olens,
         )
-        loss = l1_loss + duration_loss + pitch_loss + energy_loss
+        loss = l1_loss + duration_loss + pitch_loss 
 
         stats = dict(
             l1_loss=l1_loss.item(),
             duration_loss=duration_loss.item(),
             pitch_loss=pitch_loss.item(),
-            energy_loss=energy_loss.item(),
         )
 
         # report extra information
@@ -590,13 +562,12 @@ class FastSpeech2(AbsTTS):
         olens: Optional[torch.Tensor] = None,
         ds: Optional[torch.Tensor] = None,
         ps: Optional[torch.Tensor] = None,
-        es: Optional[torch.Tensor] = None,
         spembs: Optional[torch.Tensor] = None,
         sids: Optional[torch.Tensor] = None,
         lids: Optional[torch.Tensor] = None,
         is_inference: bool = False,
         alpha: float = 1.0,
-    ) -> Tuple [ torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor ]:
+    ) -> Tuple [ torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor ]:
         # forward encoder
         x_masks = self._source_mask(ilens)
         
@@ -604,6 +575,7 @@ class FastSpeech2(AbsTTS):
         
         # integrate with SID and LID embeddings
         if self.spks is not None:
+            sids = torch.jit._unwrap_optional(sids)
             sid_embs = self.sid_emb(sids.view(-1))
             hs = hs + sid_embs.unsqueeze(1)
         if self.langs is not None:
@@ -617,28 +589,21 @@ class FastSpeech2(AbsTTS):
             p_outs = self.pitch_predictor(hs.detach(), d_masks.unsqueeze(-1))
         else:
             p_outs = self.pitch_predictor(hs, d_masks.unsqueeze(-1))
-        if self.stop_gradient_from_energy_predictor:
-            e_outs = self.energy_predictor(hs.detach(), d_masks.unsqueeze(-1))
-        else:
-            e_outs = self.energy_predictor(hs, d_masks.unsqueeze(-1))
 
         if is_inference:
             d_outs = self.duration_predictor.inference(hs, d_masks)  # (B, T_text)
             # use prediction in inference
             p_embs = self.pitch_embed(p_outs.transpose(1, 2)).transpose(1, 2)
-            e_embs = self.energy_embed(e_outs.transpose(1, 2)).transpose(1, 2)
-            hs = hs + e_embs + p_embs
+            hs = hs + p_embs
             hs = self.length_regulator(hs, d_outs, alpha, True)  # (B, T_feats, adim)
         else:
             d_outs = self.duration_predictor(hs, d_masks)
             # use groundtruth in training
             ps = torch.jit._unwrap_optional(ps)
-            es = torch.jit._unwrap_optional(es)
             ds = torch.jit._unwrap_optional(ds)
             p_embs = self.pitch_embed(ps.transpose(1, 2)).transpose(1, 2)
-            e_embs = self.energy_embed(es.transpose(1, 2)).transpose(1, 2)
             
-            hs = hs + e_embs + p_embs
+            hs = hs +  p_embs
             hs = self.length_regulator(hs, ds)  # (B, T_feats, adim)
 
         # forward decoder
@@ -664,7 +629,7 @@ class FastSpeech2(AbsTTS):
                 before_outs.transpose(1, 2)
             ).transpose(1, 2)
 
-        return before_outs, after_outs, d_outs, p_outs, e_outs
+        return before_outs, after_outs, d_outs, p_outs
 
     def _inference(
         self,
@@ -674,13 +639,12 @@ class FastSpeech2(AbsTTS):
         sids: Optional[torch.Tensor] = None,
         lids: Optional[torch.Tensor] = None,
         pitch: Optional[torch.Tensor] = None,
-        energy: Optional[torch.Tensor] = None,
         alpha: float = 1.0,
         use_teacher_forcing: bool = False,
-    ) -> Tuple[torch.Tensor,torch.Tensor,torch.Tensor,torch.Tensor,torch.Tensor]:
+    ) -> Tuple[torch.Tensor,torch.Tensor,torch.Tensor,torch.Tensor]:
 
         x, y = text, feats
-        d, p, e = durations, pitch, energy
+        d, p = durations, pitch
 
         # add eos at the last of sequence
         # x = F.pad(x, [0, 1], "constant", self.eos)
@@ -708,7 +672,7 @@ class FastSpeech2(AbsTTS):
         #         lids=lids,
         #     )  # (1, T_feats, odim)
         # else:
-        before_outs, outs, d_outs, p_outs, e_outs = self._forward(
+        before_outs, outs, d_outs, p_outs = self._forward(
             xs,
             ilens,
             ys,
@@ -717,7 +681,7 @@ class FastSpeech2(AbsTTS):
             is_inference=True,
             alpha=alpha,
         )  # (1, T_feats, odim)
-        return before_outs, outs, d_outs, p_outs, e_outs
+        return before_outs, outs, d_outs, p_outs
 
     def inference(
         self,
@@ -754,14 +718,13 @@ class FastSpeech2(AbsTTS):
                 * energy (Tensor): Energy sequence (T_text + 1,).
 
         """
-        before_outs, outs, d_outs, p_outs, e_outs = self._inference(
+        before_outs, outs, d_outs, p_outs = self._inference(
           text,
           feats,
           durations,
           sids,
           lids,
           pitch,
-          energy,
           alpha,
           use_teacher_forcing
         )
@@ -770,17 +733,18 @@ class FastSpeech2(AbsTTS):
             feat_gen=before_outs[0],
             duration=d_outs[0],
             pitch=p_outs[0],
-            energy=e_outs[0],
         )
 
     def export(
         self,
         text: torch.Tensor,
+        sids: torch.Tensor
     ) -> Tuple[torch.Tensor,torch.Tensor]:
-      before_outs, outs, d_outs, p_outs, e_outs = self._inference(
+      before_outs, outs, d_outs, p_outs = self._inference(
           text,
+          sids=sids
         )
-      return outs, d_outs
+      return before_outs, d_outs
 
     def _integrate_with_spk_embed(
         self, hs: torch.Tensor, spembs: torch.Tensor

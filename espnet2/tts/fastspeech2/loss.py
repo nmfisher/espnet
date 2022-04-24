@@ -47,14 +47,12 @@ class FastSpeech2Loss(torch.nn.Module):
         before_outs: torch.Tensor,
         d_outs: torch.Tensor,
         p_outs: torch.Tensor,
-        e_outs: torch.Tensor,
         ys: torch.Tensor,
         ds: torch.Tensor,
         ps: torch.Tensor,
-        es: torch.Tensor,
         ilens: torch.Tensor,
         olens: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Calculate forward propagation.
 
         Args:
@@ -89,9 +87,7 @@ class FastSpeech2Loss(torch.nn.Module):
             ds = ds.masked_select(duration_masks)
             pitch_masks = make_non_pad_mask(ilens).unsqueeze(-1).to(ys.device)
             p_outs = p_outs.masked_select(pitch_masks)
-            e_outs = e_outs.masked_select(pitch_masks)
             ps = ps.masked_select(pitch_masks)
-            es = es.masked_select(pitch_masks)
 
         # calculate loss
         l1_loss = self.l1_criterion(before_outs, ys)
@@ -99,7 +95,6 @@ class FastSpeech2Loss(torch.nn.Module):
             l1_loss += self.l1_criterion(after_outs, ys)
         duration_loss = self.duration_criterion(d_outs, ds)
         pitch_loss = self.mse_criterion(p_outs, ps)
-        energy_loss = self.mse_criterion(e_outs, es)
 
         # make weighted mask and apply it
         if self.use_weighted_masking:
@@ -120,8 +115,5 @@ class FastSpeech2Loss(torch.nn.Module):
             pitch_masks = duration_masks.unsqueeze(-1)
             pitch_weights = duration_weights.unsqueeze(-1)
             pitch_loss = pitch_loss.mul(pitch_weights).masked_select(pitch_masks).sum()
-            energy_loss = (
-                energy_loss.mul(pitch_weights).masked_select(pitch_masks).sum()
-            )
 
-        return l1_loss, duration_loss, pitch_loss, energy_loss
+        return l1_loss, duration_loss, pitch_loss

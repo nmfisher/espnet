@@ -204,11 +204,19 @@ class TTSTask(AbsTask):
             default=None,
             help="Specify g2p method if --token_type=phn",
         )
+        group.add_argument(
+            "--num_speakers",
+            type=int_or_none,
+            default=None,
+            help="Total number of speakers (used for speaker embedding size)",
+        )
 
         for class_choices in cls.class_choices_list:
             # Append --<name> and --<name>_conf.
             # e.g. --encoder and --encoder_conf
             class_choices.add_arguments(group)
+
+            
 
     @classmethod
     def build_collate_fn(
