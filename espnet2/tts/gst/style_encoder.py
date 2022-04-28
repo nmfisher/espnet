@@ -167,6 +167,9 @@ class ReferenceEncoder(torch.nn.Module):
             ) // conv_stride + 1
         gru_in_units *= conv_out_chans
         self.gru = torch.nn.GRU(gru_in_units, gru_units, gru_layers, batch_first=True)
+        self.gru_units = gru_units
+        self.gru.flatten_parameters()
+        self.gru_layers = gru_layers
 
     def forward(self, speech: torch.Tensor) -> torch.Tensor:
         """Calculate forward propagation.
@@ -180,14 +183,18 @@ class ReferenceEncoder(torch.nn.Module):
         """
         batch_size = speech.size(0)
         xs = speech.unsqueeze(1)  # (B, 1, Lmax, idim)
+        
         hs = self.convs(xs).transpose(1, 2)  # (B, Lmax', conv_out_chans, idim')
+        
         # NOTE(kan-bayashi): We need to care the length?
         time_length = hs.size(1)
+        
         hs = hs.contiguous().view(batch_size, time_length, -1)  # (B, Lmax', gru_units)
-        self.gru.flatten_parameters()
+        
         _, ref_embs = self.gru(hs)  # (gru_layers, batch_size, gru_units)
-        ref_embs = ref_embs[-1]  # (batch_size, gru_units)
-
+        
+        ref_embs = ref_embs[-1] # (batch_size, gru_units)
+        
         return ref_embs
 
 
@@ -245,11 +252,13 @@ class StyleTokenLayer(torch.nn.Module):
         batch_size = ref_embs.size(0)
         # (num_tokens, token_dim) -> (batch_size, num_tokens, token_dim)
         gst_embs = torch.tanh(self.gst_embs).unsqueeze(0).expand(batch_size, -1, -1)
+
         # NOTE(kan-bayashi): Shoule we apply Tanh?
         ref_embs = ref_embs.unsqueeze(1)  # (batch_size, 1 ,ref_embed_dim)
-        style_embs = self.mha(ref_embs, gst_embs, gst_embs, None)
-
-        return style_embs.squeeze(1)
+        
+        style_embs = self.mha(ref_embs, gst_embs, gst_embs, torch.ones(ref_embs.size(0), ref_embs.size(1), dtype=torch.bool))
+        
+        return style_embs.reshape(style_embs.size(0), style_embs.size(2))
 
 
 class MultiHeadedAttention(BaseMultiHeadedAttention):
@@ -268,5 +277,5 @@ class MultiHeadedAttention(BaseMultiHeadedAttention):
         self.linear_k = torch.nn.Linear(k_dim, n_feat)
         self.linear_v = torch.nn.Linear(v_dim, n_feat)
         self.linear_out = torch.nn.Linear(n_feat, n_feat)
-        self.attn = None
         self.dropout = torch.nn.Dropout(p=dropout_rate)
+        self.attn : torch.Tensor = torch.zeros(1,dtype=torch.float32)

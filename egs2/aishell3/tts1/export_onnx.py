@@ -8,6 +8,7 @@ python convert_tts2onnx.py --tts-tag espnet/kan-bayashi_ljspeech_vits
 """
 import argparse
 import logging
+from re import X
 import sys
 import numpy as np
 import torch
@@ -22,7 +23,9 @@ from espnet2.utils.types import str_or_none
 
 import torch.nn.functional as F
 
-
+class FooModel(torch.nn.Module):
+    def forward(self, x):
+        return x, x
 def get_parser():
     parser = argparse.ArgumentParser(
         description="",
@@ -55,11 +58,10 @@ if __name__ == "__main__":
         model = tts.model.tts
         model.eval()
 
-        # text: torch.Tensor,
-        inputs = (
-          torch.tensor([2, 15, 26, 39, 9,8, 10, 27, 3,11, 2],dtype=torch.int).to(device), 
-          torch.tensor([1],dtype=torch.int).to(device), 
-        )
+        text = torch.tensor([2, 15, 26, 39, 9,8, 10, 27, 3,11, 2],dtype=torch.int).to(device)
+        feats = torch.randn(150,20).to(device) # fake BFCCs
+        
+        inputs = (text, feats)
 
         # plain method invocation to confirm that everything works correctly outside torch.jit.script
         model.forward = model.export
@@ -79,17 +81,23 @@ if __name__ == "__main__":
             opset_version=14,
             do_constant_folding=False,
             verbose=True,
-            input_names=['phones','speaker_id'],
+            input_names=[
+                'phones', 'style_reference'
+            # ,'speaker_id'
+            ],
             output_names=['pcm','durations'],
             dynamic_axes={
                 'phones': {
+                    0: 'length'
+                },
+                'style_reference': {
                     0: 'length'
                 },
                 'pcm': {
                     0: 'olen', 
                 },
                 'durations': {
-                    0: 'length'
+                    1: 'length'
                 },
             }
         )

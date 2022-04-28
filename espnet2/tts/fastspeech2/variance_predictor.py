@@ -76,7 +76,7 @@ class VariancePredictor(torch.nn.Module):
             Tensor: Batch of predicted sequences (B, Tmax, 1).
 
         """
-        xs = xs.transpose(1, -1)  # (B, idim, Tmax)
+        xs = xs.transpose(1, 2)  # (B, idim, Tmax)
         for f in self.conv:
             xs = f(xs)  # (B, C, Tmax)
 

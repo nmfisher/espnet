@@ -317,7 +317,7 @@ class FastSpeech2(AbsTTS):
             )
 
         # define spk and lang embedding
-        spks = 9
+        # spks = 9
         self.spks = None
         if spks is not None and spks > 1:
             self.spks = spks
@@ -473,7 +473,6 @@ class FastSpeech2(AbsTTS):
             Tensor: Weight value if not joint training else model outputs.
 
         """
-
         text = text[:, : text_lengths.max()]  # for data-parallel
         feats = feats[:, : feats_lengths.max()]  # for data-parallel
         durations = durations[:, : durations_lengths.max()]  # for data-parallel
@@ -558,7 +557,7 @@ class FastSpeech2(AbsTTS):
         self,
         xs: torch.Tensor,
         ilens: torch.Tensor,
-        ys: Optional[torch.Tensor] = None,
+        ys: torch.Tensor = None,
         olens: Optional[torch.Tensor] = None,
         ds: Optional[torch.Tensor] = None,
         ps: Optional[torch.Tensor] = None,
@@ -569,9 +568,15 @@ class FastSpeech2(AbsTTS):
         alpha: float = 1.0,
     ) -> Tuple [ torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor ]:
         # forward encoder
+        
         x_masks = self._source_mask(ilens)
         
         hs, _ = self.encoder(xs, x_masks)  # (B, T_text, adim)
+        # integrate with GST
+        
+        # if self.use_gst:
+        #     style_embs = self.gst(ys)
+        #     hs = hs + style_embs.unsqueeze(1)
         
         # integrate with SID and LID embeddings
         if self.spks is not None:
@@ -584,12 +589,11 @@ class FastSpeech2(AbsTTS):
 
         # forward duration predictor and variance predictors
         d_masks = make_pad_mask(ilens).to(xs.device)
-
+        
         if self.stop_gradient_from_pitch_predictor:
             p_outs = self.pitch_predictor(hs.detach(), d_masks.unsqueeze(-1))
         else:
             p_outs = self.pitch_predictor(hs, d_masks.unsqueeze(-1))
-
         if is_inference:
             d_outs = self.duration_predictor.inference(hs, d_masks)  # (B, T_text)
             # use prediction in inference
@@ -605,7 +609,6 @@ class FastSpeech2(AbsTTS):
             
             hs = hs +  p_embs
             hs = self.length_regulator(hs, ds)  # (B, T_feats, adim)
-
         # forward decoder
         if olens is not None and not is_inference:
             if self.reduction_factor > 1:
@@ -614,9 +617,10 @@ class FastSpeech2(AbsTTS):
                 olens_in = olens
             h_masks = self._source_mask(olens_in)
         else:
-            h_masks = None
+            h_masks = torch.ones(1, hs.size(1), dtype=torch.bool).to(hs.device)
         
         zs, _ = self.decoder(hs, h_masks)  # (B, T_feats, adim)
+        
         before_outs = self.feat_out(zs).view(
             zs.size(0), -1, self.odim
         )  # (B, T_feats, odim)
@@ -628,13 +632,13 @@ class FastSpeech2(AbsTTS):
             after_outs = before_outs + self.postnet(
                 before_outs.transpose(1, 2)
             ).transpose(1, 2)
-
+        
         return before_outs, after_outs, d_outs, p_outs
 
     def _inference(
         self,
         text: torch.Tensor,
-        feats: Optional[torch.Tensor] = None,
+        feats: torch.Tensor = None,
         durations: Optional[torch.Tensor] = None,
         sids: Optional[torch.Tensor] = None,
         lids: Optional[torch.Tensor] = None,
@@ -651,7 +655,8 @@ class FastSpeech2(AbsTTS):
 
         # setup batch axis
         ilens = torch.tensor([x.shape[0]], dtype=torch.long, device=x.device)
-        xs, ys = x.unsqueeze(0), None
+        
+        xs, ys = x.unsqueeze(0), feats.unsqueeze(0)
         # if y is not None:
         #     ys = y.unsqueeze(0)
         
@@ -738,12 +743,16 @@ class FastSpeech2(AbsTTS):
     def export(
         self,
         text: torch.Tensor,
-        sids: torch.Tensor
+        feats: torch.Tensor
+        # sids: Optional [ torch.Tensor ] = None
     ) -> Tuple[torch.Tensor,torch.Tensor]:
       before_outs, outs, d_outs, p_outs = self._inference(
           text,
-          sids=sids
+          feats
+        #   sids=sids
         )
+      print(text.size())
+      raise Exception(d_outs.size())
       return before_outs, d_outs
 
     def _integrate_with_spk_embed(

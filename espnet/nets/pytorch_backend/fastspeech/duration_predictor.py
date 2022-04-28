@@ -73,7 +73,7 @@ class DurationPredictor(torch.nn.Module):
             xs = f(xs)  # (B, C, Tmax)
 
         # NOTE: calculate in log domain
-        xs = self.linear(xs.transpose(1, -1)).squeeze(-1)  # (B, Tmax)
+        xs = self.linear(xs.transpose(1, 2)).squeeze(-1)  # (B, Tmax)
 
         if is_inference:
             # NOTE: calculate in linear domain

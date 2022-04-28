@@ -36,5 +36,6 @@ class LayerNorm(torch.nn.Module):
         """
         if self.dim == -1:
             return self.ln(x)
-        return self.ln(x.transpose(self.dim, -1)).transpose(self.dim, -1)
+        
+        return self.ln(x.transpose(self.dim, 2)).transpose(self.dim, 2)
         

@@ -278,6 +278,7 @@ class ESPnetTTSModel(AbsESPnetModel):
 
         """
         input_dict = dict(text=text)
+                
         if decode_config["use_teacher_forcing"] or getattr(self.tts, "use_gst", False):
             if speech is None:
                 raise RuntimeError("missing required argument: 'speech'")

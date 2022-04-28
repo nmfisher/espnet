@@ -13,6 +13,7 @@ from torch import nn
 
 from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
 
+from typing import Optional, Tuple
 
 class EncoderLayer(nn.Module):
     """Encoder layer module.
@@ -73,11 +74,11 @@ class EncoderLayer(nn.Module):
         self.size = size
         self.normalize_before = normalize_before
         self.concat_after = concat_after
-        if self.concat_after:
-            self.concat_linear = nn.Linear(size + size, size)
+        # if self.concat_after:
+        self.concat_linear = nn.Linear(size + size, size)
         self.stochastic_depth_rate = stochastic_depth_rate
 
-    def forward(self, x_input, mask, cache=None):
+    def forward(self, x_input : Tuple [ torch.Tensor,torch.Tensor], mask: torch.Tensor, cache: Optional [ torch.Tensor ]=None):
         """Compute encoded features.
 
         Args:

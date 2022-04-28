@@ -28,9 +28,10 @@ from espnet.nets.pytorch_backend.transformer.multi_layer_conv import MultiLayere
 from espnet.nets.pytorch_backend.transformer.positionwise_feed_forward import (
     PositionwiseFeedForward,  # noqa: H301
 )
-from espnet.nets.pytorch_backend.transformer.repeat import repeat
+# from espnet.nets.pytorch_backend.transformer.repeat import repeat
 from espnet.nets.pytorch_backend.transformer.subsampling import Conv2dSubsampling
 
+from typing import Optional 
 
 class Encoder(torch.nn.Module):
     """Conformer encoder module.
@@ -114,6 +115,7 @@ class Encoder(torch.nn.Module):
             raise ValueError("unknown pos_enc_layer: " + pos_enc_layer_type)
 
         self.conv_subsampling_factor = 1
+        
         if input_layer == "linear":
             self.embed = torch.nn.Sequential(
                 torch.nn.Linear(idim, attention_dim),
@@ -211,10 +213,10 @@ class Encoder(torch.nn.Module):
         # convolution module definition
         convolution_layer = ConvolutionModule
         convolution_layer_args = (attention_dim, cnn_module_kernel, activation)
-
-        self.encoders = repeat(
-            num_blocks,
-            lambda lnum: EncoderLayer(
+        self.encoders = torch.nn.ModuleList()
+        for i in range(num_blocks):
+            self.encoders += [
+            EncoderLayer(
                 attention_dim,
                 encoder_selfattn_layer(*encoder_selfattn_layer_args),
                 positionwise_layer(*positionwise_layer_args),
@@ -223,9 +225,9 @@ class Encoder(torch.nn.Module):
                 dropout_rate,
                 normalize_before,
                 concat_after,
-                stochastic_depth_rate * float(1 + lnum) / num_blocks,
-            ),
-        )
+                stochastic_depth_rate * float(1 + i) / num_blocks,
+            )]
+        
         if self.normalize_before:
             self.after_norm = LayerNorm(attention_dim)
 
@@ -237,7 +239,7 @@ class Encoder(torch.nn.Module):
                 conditioning_layer_dim, attention_dim
             )
 
-    def forward(self, xs, masks):
+    def forward(self, xs: torch.Tensor, masks:Optional[torch.Tensor]):
         """Encode input sequence.
 
         Args:
@@ -249,13 +251,17 @@ class Encoder(torch.nn.Module):
             torch.Tensor: Mask tensor (#batch, time).
 
         """
-        if isinstance(self.embed, (Conv2dSubsampling, VGG2L)):
-            xs, masks = self.embed(xs, masks)
-        else:
-            xs = self.embed(xs)
-
+        # if isinstance(self.embed, (Conv2dSubsampling, VGG2L)):
+        #     xs, masks = self.embed(xs, masks)
+        # else:
+        xs = self.embed(xs)
+        if masks is None:
+            raise Exception("MASKS")
+        
         if self.intermediate_layers is None:
-            xs, masks = self.encoders(xs, masks)
+            for enc in self.encoders:
+                print(xs[1].device)
+                xs, masks = enc(xs, masks)
         else:
             intermediate_outputs = []
             for layer_idx, encoder_layer in enumerate(self.encoders):

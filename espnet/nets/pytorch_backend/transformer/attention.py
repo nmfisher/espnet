@@ -36,7 +36,6 @@ class MultiHeadedAttention(nn.Module):
         self.linear_k = nn.Linear(n_feat, n_feat)
         self.linear_v = nn.Linear(n_feat, n_feat)
         self.linear_out = nn.Linear(n_feat, n_feat)
-        self.attn : torch.Tensor = torch.zeros(1,dtype=torch.float32)
         self.dropout = nn.Dropout(p=dropout_rate)
 
     def forward_qkv(self, query, key, value):
@@ -63,7 +62,7 @@ class MultiHeadedAttention(nn.Module):
 
         return q, k, v
 
-    def forward_attention(self, value, scores, mask : Optional [ torch.Tensor ]):
+    def forward_attention(self, value, scores, mask : torch.Tensor):
         """Compute attention context vector.
 
         Args:
@@ -77,6 +76,7 @@ class MultiHeadedAttention(nn.Module):
 
         """
         n_batch = value.size(0)
+        
         if mask is not None:
             mask = mask.unsqueeze(1).eq(0)  # (batch, 1, *, time2)
             min_value = float(-math.inf)
@@ -84,21 +84,25 @@ class MultiHeadedAttention(nn.Module):
             #     numpy.finfo(torch.tensor(0, dtype=scores.dtype).numpy().dtype).min
             # )
             scores = scores.masked_fill(mask, min_value)
-            self.attn = torch.softmax(scores, dim=-1).masked_fill(
+            sm = torch.softmax(scores, dim=-1)
+            
+            mf = sm.masked_fill(
                 mask, 0.0
             )  # (batch, head, time1, time2)
+            self.attn = mf
         else:
             self.attn = torch.softmax(scores, dim=-1)  # (batch, head, time1, time2)
 
         p_attn = self.dropout(self.attn)
         x = torch.matmul(p_attn, value)  # (batch, head, time1, d_k)
+        
         x = (
-            x.transpose(1, 2).contiguous().view(n_batch, -1, self.h * self.d_k)
+            x.transpose(1, 2).contiguous().reshape(n_batch, -1, self.h * self.d_k)
         )  # (batch, time1, d_model)
 
         return self.linear_out(x)  # (batch, time1, d_model)
 
-    def forward(self, query, key, value, mask : Optional [ torch.Tensor ]):
+    def forward(self, query, key, value, mask : torch.Tensor):
         """Compute scaled dot product attention.
 
         Args:
@@ -113,7 +117,8 @@ class MultiHeadedAttention(nn.Module):
 
         """
         q, k, v = self.forward_qkv(query, key, value)
-        scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
+        scores = torch.matmul(q, k.transpose(2, 3)) / math.sqrt(self.d_k)
+        
         return self.forward_attention(v, scores, mask)
 
 
@@ -251,10 +256,10 @@ class RelPositionMultiHeadedAttention(MultiHeadedAttention):
             torch.Tensor: Output tensor.
 
         """
-        zero_pad = torch.zeros((*x.size()[:3], 1), device=x.device, dtype=x.dtype)
+        zero_pad = torch.zeros((x.size(0), x.size(1), x.size(2), 1), device=x.device, dtype=x.dtype)
         x_padded = torch.cat([zero_pad, x], dim=-1)
 
-        x_padded = x_padded.view(*x.size()[:2], x.size(3) + 1, x.size(2))
+        x_padded = x_padded.view(x.size(0), x.size(1), x.size(3) + 1, x.size(2))
         x = x_padded[:, :, 1:].view_as(x)[
             :, :, :, : x.size(-1) // 2 + 1
         ]  # only keep the positions from 0 to time2
@@ -265,7 +270,7 @@ class RelPositionMultiHeadedAttention(MultiHeadedAttention):
 
         return x
 
-    def forward(self, query, key, value, pos_emb, mask):
+    def forward(self, query, key, value, pos_emb, mask : torch.Tensor):
         """Compute 'Scaled Dot Product Attention' with rel. positional encoding.
 
         Args:
@@ -285,6 +290,7 @@ class RelPositionMultiHeadedAttention(MultiHeadedAttention):
         q = q.transpose(1, 2)  # (batch, time1, head, d_k)
 
         n_batch_pos = pos_emb.size(0)
+        
         p = self.linear_pos(pos_emb).view(n_batch_pos, -1, self.h, self.d_k)
         p = p.transpose(1, 2)  # (batch, head, 2*time1-1, d_k)
 
@@ -297,11 +303,11 @@ class RelPositionMultiHeadedAttention(MultiHeadedAttention):
         # first compute matrix a and matrix c
         # as described in https://arxiv.org/abs/1901.02860 Section 3.3
         # (batch, head, time1, time2)
-        matrix_ac = torch.matmul(q_with_bias_u, k.transpose(-2, -1))
+        matrix_ac = torch.matmul(q_with_bias_u, k.transpose(2, 3))
 
         # compute matrix b and matrix d
         # (batch, head, time1, 2*time1-1)
-        matrix_bd = torch.matmul(q_with_bias_v, p.transpose(-2, -1))
+        matrix_bd = torch.matmul(q_with_bias_v, p.transpose(2, 3))
         matrix_bd = self.rel_shift(matrix_bd)
 
         scores = (matrix_ac + matrix_bd) / math.sqrt(

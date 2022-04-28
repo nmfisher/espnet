@@ -59,8 +59,8 @@ class MultiLayeredConv1d(torch.nn.Module):
             torch.Tensor: Batch of output tensors (B, T, hidden_chans).
 
         """
-        x = torch.relu(self.w_1(x.transpose(-1, 1))).transpose(-1, 1)
-        return self.w_2(self.dropout(x).transpose(-1, 1)).transpose(-1, 1)
+        x = torch.relu(self.w_1(x.transpose(2, 1))).transpose(2, 1)
+        return self.w_2(self.dropout(x).transpose(2, 1)).transpose(2, 1)
 
 
 class Conv1dLinear(torch.nn.Module):
