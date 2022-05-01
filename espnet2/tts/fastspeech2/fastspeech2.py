@@ -574,9 +574,9 @@ class FastSpeech2(AbsTTS):
         hs, _ = self.encoder(xs, x_masks)  # (B, T_text, adim)
         # integrate with GST
         
-        # if self.use_gst:
-        #     style_embs = self.gst(ys)
-        #     hs = hs + style_embs.unsqueeze(1)
+        if self.use_gst:
+            style_embs = self.gst(ys)
+            hs = hs + style_embs.unsqueeze(1)
         
         # integrate with SID and LID embeddings
         if self.spks is not None:
@@ -660,23 +660,6 @@ class FastSpeech2(AbsTTS):
         # if y is not None:
         #     ys = y.unsqueeze(0)
         
-        
-        # if use_teacher_forcing:
-        #     raise Exception()
-        #     # use groundtruth of duration, pitch, and energy
-        #     ds, ps, es = d.unsqueeze(0), p.unsqueeze(0), e.unsqueeze(0)
-        #     _, outs, d_outs, p_outs, e_outs = self._forward(
-        #         xs,
-        #         ilens,
-        #         ys,
-        #         ds=ds,
-        #         ps=ps,
-        #         es=es,
-        #         spembs=spembs,
-        #         sids=sids,
-        #         lids=lids,
-        #     )  # (1, T_feats, odim)
-        # else:
         before_outs, outs, d_outs, p_outs = self._forward(
             xs,
             ilens,
@@ -751,8 +734,6 @@ class FastSpeech2(AbsTTS):
           feats
         #   sids=sids
         )
-      print(text.size())
-      raise Exception(d_outs.size())
       return before_outs, d_outs
 
     def _integrate_with_spk_embed(

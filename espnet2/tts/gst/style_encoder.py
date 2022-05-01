@@ -256,8 +256,8 @@ class StyleTokenLayer(torch.nn.Module):
         # NOTE(kan-bayashi): Shoule we apply Tanh?
         ref_embs = ref_embs.unsqueeze(1)  # (batch_size, 1 ,ref_embed_dim)
         
-        style_embs = self.mha(ref_embs, gst_embs, gst_embs, torch.ones(ref_embs.size(0), ref_embs.size(1), dtype=torch.bool))
-        
+        style_embs = self.mha(ref_embs, gst_embs, gst_embs, None) 
+        # return style_embs.squeeze(1)
         return style_embs.reshape(style_embs.size(0), style_embs.size(2))
 
 
