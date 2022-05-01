@@ -61,7 +61,9 @@ def fix(feats_file, durations_file, durations_out_file):
           durations[-1] += (feats.shape[0] - dsum)
         elif dsum > feats.shape[0]:
           durations[0] -= (dsum - feats.shape[0])
-        assert(durations.sum() == feats.shape[0])
+        if int(round(durations.sum())) != feats.shape[0]:
+            print(durations)
+            raise Exception(f"Mismatch durations : {durations.sum()} vs feats {feats.shape[0]}")
         dur_writer.write("%s %s\n" % (utt_id, " ".join([str(int(x)) for x in durations])))
         print(f"Fixed durations for utterance {utt_id}")
 
