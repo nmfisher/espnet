@@ -317,11 +317,11 @@ class FastSpeech2(AbsTTS):
             )
 
         # define spk and lang embedding
-        # spks = 9
+        
         self.spks = None
         if spks is not None and spks > 1:
             self.spks = spks
-            self.sid_emb = torch.nn.Embedding(spks, adim)
+            self.sid_emb = torch.nn.Embedding(self.spks, adim)
         self.langs = None
         if langs is not None and langs > 1:
             self.langs = langs
@@ -495,11 +495,11 @@ class FastSpeech2(AbsTTS):
             xs,
             ilens,
             ys,
+            sids,
             olens,
             ds,
             ps,
             spembs=spembs,
-            sids=sids,
             lids=lids,
             is_inference=False,
         )
@@ -557,12 +557,12 @@ class FastSpeech2(AbsTTS):
         self,
         xs: torch.Tensor,
         ilens: torch.Tensor,
-        ys: torch.Tensor = None,
+        ys: torch.Tensor,
+        sids: torch.Tensor,
         olens: Optional[torch.Tensor] = None,
         ds: Optional[torch.Tensor] = None,
         ps: Optional[torch.Tensor] = None,
         spembs: Optional[torch.Tensor] = None,
-        sids: Optional[torch.Tensor] = None,
         lids: Optional[torch.Tensor] = None,
         is_inference: bool = False,
         alpha: float = 1.0,
@@ -580,7 +580,7 @@ class FastSpeech2(AbsTTS):
         
         # integrate with SID and LID embeddings
         if self.spks is not None:
-            sids = torch.jit._unwrap_optional(sids)
+            # sids = torch.jit._unwrap_optional(sids)
             sid_embs = self.sid_emb(sids.view(-1))
             hs = hs + sid_embs.unsqueeze(1)
         if self.langs is not None:
@@ -638,9 +638,9 @@ class FastSpeech2(AbsTTS):
     def _inference(
         self,
         text: torch.Tensor,
-        feats: torch.Tensor = None,
+        feats: torch.Tensor,
+        sids: torch.Tensor,
         durations: Optional[torch.Tensor] = None,
-        sids: Optional[torch.Tensor] = None,
         lids: Optional[torch.Tensor] = None,
         pitch: Optional[torch.Tensor] = None,
         alpha: float = 1.0,
@@ -664,7 +664,8 @@ class FastSpeech2(AbsTTS):
             xs,
             ilens,
             ys,
-            sids=sids,
+            sids,
+            None,
             lids=lids,
             is_inference=True,
             alpha=alpha,
@@ -674,9 +675,8 @@ class FastSpeech2(AbsTTS):
     def inference(
         self,
         text: torch.Tensor,
-        feats: Optional[torch.Tensor] = None,
-        durations: Optional[torch.Tensor] = None,
-        sids: Optional[torch.Tensor] = None,
+        feats: torch.Tensor,
+        sids: torch.Tensor,
         lids: Optional[torch.Tensor] = None,
         pitch: Optional[torch.Tensor] = None,
         energy: Optional[torch.Tensor] = None,
@@ -706,11 +706,13 @@ class FastSpeech2(AbsTTS):
                 * energy (Tensor): Energy sequence (T_text + 1,).
 
         """
+        if sids is None:
+            raise Exception()
         before_outs, outs, d_outs, p_outs = self._inference(
           text,
           feats,
-          durations,
           sids,
+          None,
           lids,
           pitch,
           alpha,
@@ -726,13 +728,13 @@ class FastSpeech2(AbsTTS):
     def export(
         self,
         text: torch.Tensor,
-        feats: torch.Tensor
-        # sids: Optional [ torch.Tensor ] = None
+        feats: torch.Tensor,
+        sids: torch.Tensor
     ) -> Tuple[torch.Tensor,torch.Tensor]:
       before_outs, outs, d_outs, p_outs = self._inference(
           text,
-          feats
-        #   sids=sids
+          feats,
+          sids=sids
         )
       return before_outs, d_outs
 

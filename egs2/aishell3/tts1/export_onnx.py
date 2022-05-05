@@ -49,6 +49,7 @@ if __name__ == "__main__":
         train_config="./exp/tts_train_gst+xvector_conformer_fastspeech2_bfcc_phn_none/config.yaml",
         vocoder_tag=None,
         device=device,
+        num_speakers=9
     )
 
     # Prepare modules for conversion
@@ -56,17 +57,31 @@ if __name__ == "__main__":
     with torch.no_grad():
         
         model = tts.model.tts
-        model.eval()
-
-        text = torch.tensor([2, 15, 26, 39, 9,8, 10, 27, 3,11, 2],dtype=torch.int).to(device)
-        feats = torch.randn(150,20).to(device) # fake BFCCs
         
-        inputs = (text, feats)
+        model.eval()
+        #import numpy as np
+        text = torch.tensor([140,130,69,131,115,144,99,18,99,14],dtype=torch.int).to(device)
+        # with open("/tmp/tmp.feats.txt") as infile:
+        #     lines = infile.readlines()
+        #     data =[]
+        #     for line in lines[1:]:
+        #         line = line.strip().split(" ")
+        #         line = [l for l in line  if len(l) > 0 and l != "]"]
+        #         data += [[float(x) for x in line]]
+        # feats = np.fromfile("exp/tts_train_gst+xvector_conformer_fastspeech2_bfcc_phn_none/inference_train.loss.best/test/log/output.28/norm/zhCNXiaoyouNeural-d270e74e19ca5b9a8ff86f4d80214dfa_duration_1.1.npy",dtype=np.float32).reshape(-1,20)
+        # feats = torch.tensor(feats).to(device)
+        feats = torch.randn(150,20).to(device) # fake BFCCs
+        sids = torch.tensor([4]).to(device) # speaker IDs
+
+        odict = model.inference(text, feats=feats, sids=sids)
+        odict["feat_gen"].detach().numpy().tofile("/tmp/torch_bfccs")
+        
+        inputs = (text, feats, sids)
 
         # plain method invocation to confirm that everything works correctly outside torch.jit.script
         model.forward = model.export
 
-        model.forward(*inputs)
+        #bfccs.detach().numpy().tofile("/tmp/torch_bfccs")
         
         # now try converstion to TorchScript
         scripted_module = torch.jit.script(model, inputs)
@@ -82,8 +97,7 @@ if __name__ == "__main__":
             do_constant_folding=False,
             verbose=True,
             input_names=[
-                'phones', 'style_reference'
-            # ,'speaker_id'
+                'phones', 'style_reference', 'speaker_id'
             ],
             output_names=['pcm','durations'],
             dynamic_axes={

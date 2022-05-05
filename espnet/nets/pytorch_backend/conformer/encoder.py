@@ -260,7 +260,6 @@ class Encoder(torch.nn.Module):
         
         if self.intermediate_layers is None:
             for enc in self.encoders:
-                print(xs[1].device)
                 xs, masks = enc(xs, masks)
         else:
             intermediate_outputs = []

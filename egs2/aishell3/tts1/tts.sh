@@ -235,6 +235,7 @@ token_list="${dumpdir}/token_list/tokens.txt"
 rm -f $token_list
 echo $blank > $token_list
 cat $src_tokens >> $token_list
+echo "spn" >> $token_list
 echo $oov >> $token_list
 echo $sos_eos >> $token_list
 
@@ -495,8 +496,8 @@ else
 fi
 # ========================== Data preparation is done here. ==========================
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
-  ./scripts/feats/make_bfcc.sh ${data_feats}/${train_set}
-  ./scripts/feats/make_bfcc.sh ${data_feats}/${valid_set}
+  ./scripts/feats/make_bfcc.sh --nj "${_nj}" ${data_feats}/${train_set}
+  ./scripts/feats/make_bfcc.sh --nj "${_nj}" ${data_feats}/${valid_set}
 fi
 
 if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
@@ -548,7 +549,7 @@ if ! "${skip_train}"; then
     if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ]; then
         _train_dir="${data_feats}/${train_set}"
         _valid_dir="${data_feats}/${valid_set}"
-        log "Stage 6: TTS collect stats: train_set=${_train_dir}, valid_set=${_valid_dir}"
+        log "Stage 7: TTS collect stats: train_set=${_train_dir}, valid_set=${_valid_dir}"
 
         _opts=
         if [ -n "${train_config}" ]; then
@@ -698,7 +699,7 @@ if ! "${skip_train}"; then
         fi
 
 
-        # Add spekaer ID to the inputs if needed
+        # Add speaker ID to the inputs if needed
         if "${use_sid}"; then
             _opts+="--train_data_path_and_name_and_type ${_train_dir}/utt2sid,sids,text_int "
             _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/utt2sid,sids,text_int "
@@ -828,16 +829,13 @@ if ! "${skip_eval}"; then
             # Add spekaer ID to the inputs if needed
             if "${use_sid}"; then
                 _ex_opts+="--data_path_and_name_and_type ${_data}/utt2sid,sids,text_int "
+                _opts+="--num_speakers $(cat "${data_feats}/org/${train_set}/spk2sid" | wc -l)"
             fi
 
             # Add language ID to the inputs if needed
             if "${use_lid}"; then
                 _ex_opts+="--data_path_and_name_and_type ${_data}/utt2lid,lids,text_int "
             fi
-
-            
-            
-
 
             # 0. Copy feats_type
             cp "${_data}/feats_type" "${_dir}/feats_type"

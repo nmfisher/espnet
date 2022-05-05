@@ -311,7 +311,7 @@ class TTSTask(AbsTask):
             normalize = normalize_class(**args.normalize_conf)
         else:
             normalize = None
-
+        args.tts_conf["spks"] = args.num_speakers
         # 3. TTS
         tts_class = tts_choices.get_class(args.tts)
         tts = tts_class(idim=vocab_size, odim=odim, **args.tts_conf)

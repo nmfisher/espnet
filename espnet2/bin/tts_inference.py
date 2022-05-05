@@ -38,7 +38,7 @@ from espnet2.utils import config_argparse
 from espnet2.utils.types import str2bool
 from espnet2.utils.types import str2triple_str
 from espnet2.utils.types import str_or_none
-
+from espnet2.utils.types import int_or_none
 
 class Text2Speech:
     """Text2Speech class.
@@ -92,6 +92,7 @@ class Text2Speech:
         device: str = "cpu",
         seed: int = 777,
         always_fix_seed: bool = False,
+        num_speakers: Optional[int] = None
     ):
         """Initialize Text2Speech module."""
         assert check_argument_types()
@@ -100,6 +101,7 @@ class Text2Speech:
         model, train_args = TTSTask.build_model_from_file(
             train_config, model_file, device
         )
+        
         model.to(dtype=getattr(torch, dtype)).eval()
         self.device = device
         self.dtype = dtype
@@ -343,6 +345,7 @@ def inference(
     vocoder_config: Optional[str],
     vocoder_file: Optional[str],
     vocoder_tag: Optional[str],
+    num_speakers: Optional[int]
 ):
     """Run text-to-speech inference."""
     assert check_argument_types()
@@ -383,6 +386,7 @@ def inference(
         device=device,
         seed=seed,
         always_fix_seed=always_fix_seed,
+        num_speakers=num_speakers
     )
     text2speech = Text2Speech.from_pretrained(
         model_tag=model_tag,
@@ -746,6 +750,12 @@ def get_parser():
         help="Pretrained vocoder tag. If specify this option, vocoder_config and "
         "vocoder_file will be overwritten",
     )
+    group.add_argument(
+            "--num_speakers",
+            type=int_or_none,
+            default=None,
+            help="Total number of speakers (used for speaker embedding size)",
+        )
     return parser
 
 
@@ -754,6 +764,7 @@ def main(cmd=None):
     print(get_commandline_args(), file=sys.stderr)
     parser = get_parser()
     args = parser.parse_args(cmd)
+    
     kwargs = vars(args)
     kwargs.pop("config", None)
     inference(**kwargs)
