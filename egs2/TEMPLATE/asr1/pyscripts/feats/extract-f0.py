@@ -90,7 +90,6 @@ def _open(path):
     with open(path, "r") as infile:
         i = 0
         for line in infile.readlines():
-            print(f"Reading line number {i}")
             i += 1
             split = line.strip().split(" ")
             yield (split[0], split[1:])

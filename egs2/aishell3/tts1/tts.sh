@@ -239,6 +239,8 @@ echo "spn" >> $token_list
 echo $oov >> $token_list
 echo $sos_eos >> $token_list
 
+_nj=1
+
 # Set tag for naming of model directory
 if [ -z "${tag}" ]; then
     if [ -n "${train_config}" ]; then
