@@ -1,0 +1,62 @@
+# This configuration is for ESPnet2 to train Conformer-based
+# FastSpeech2 with GST + X-vector. It requires 4 GPU with 32 GB
+# memory and it takes ~3 days to finish the training on V100.
+
+# Compared to the original FastSpeech2 paper, we use token
+# averaged pitch and energy as the same as FastPitch.
+# And we do not use quantized pitch and energy.
+
+# For FastSpeech2, we need to extract pitch and energy.
+# Therefore, we assume that feats_type=raw in using this
+# configuration. Please be careful.
+
+##########################################################
+#                  TTS MODEL SETTING                     #
+##########################################################
+tts: wlsc      # model architecture
+tts_conf:             # keyword arguments for the selected model
+
+
+# extra module for additional inputs
+#pitch_extract: dio           # pitch extractor type
+#pitch_normalize: global_mvn  # normalizer for the pitch feature
+#energy_extract: energy       # energy extractor type
+#energy_normalize: global_mvn # normalizer for the energy feature
+
+##########################################################
+#            OPTIMIZER & SCHEDULER SETTING               #
+##########################################################
+optim: adam            # optimizer type
+optim_conf:            # keyword arguments for selected optimizer
+    lr: 1.0            # learning rate
+scheduler: noamlr      # scheduler type
+scheduler_conf:        # keyword arguments for selected scheduler
+    model_size: 384    # model size, a.k.a., attention dimension
+    warmup_steps: 4000 # the number of warmup steps
+
+##########################################################
+#                OTHER TRAINING SETTING                  #
+##########################################################
+num_iters_per_epoch: 500  # number of iterations per epoch
+max_epoch: 1000            # number of epochs
+grad_clip: 1.0            # gradient clipping norm
+grad_noise: false         # whether to use gradient noise injection
+accum_grad: 1             # gradient accumulation
+# batch_bins: 1800000      # batch bins (feats_type=raw)
+batch_bins: 37500      # batch bins (feats_type=raw)
+batch_type: numel         # how to make batch
+sort_in_batch: descending # how to sort data in making batch
+sort_batch: descending    # how to sort created batches
+num_workers: 1            # number of workers of data loader
+train_dtype: float32      # dtype in training
+log_interval: null        # log interval in iterations
+keep_nbest_models: 5      # number of models to keep
+num_att_plot: 3           # number of attention figures to be saved in every check
+seed: 0                   # random seed number
+best_model_criterion:     # criterion to save the best models
+-   - valid
+    - loss
+    - min
+-   - train
+    - loss
+    - min
