@@ -1764,7 +1764,7 @@ class AbsTask(ABC):
             kwargs = dict(collate_fn=collate_fn)
         else:
             kwargs = {}
-
+        
         dataset = IterableESPnetDataset(
             data_path_and_name_and_type,
             float_dtype=dtype,

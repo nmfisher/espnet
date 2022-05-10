@@ -64,6 +64,12 @@ class ESPnetTTSModel(AbsESPnetModel):
         pitch_lengths: Optional[torch.Tensor] = None,
         energy: Optional[torch.Tensor] = None,
         energy_lengths: Optional[torch.Tensor] = None,
+        phone_word_mappings: Optional[torch.Tensor] = None,
+        phone_word_mappings_lengths: Optional[torch.Tensor] = None,
+        # word_phone_mappings: Optional[torch.Tensor] = None,
+        # word_phone_mappings_lengths: Optional[torch.Tensor]= None,
+        feats_word_avg: Optional[torch.Tensor] = None,
+        feats_word_avg_lengths: Optional[torch.Tensor] = None,
         spembs: Optional[torch.Tensor] = None,
         sids: Optional[torch.Tensor] = None,
         lids: Optional[torch.Tensor] = None,
@@ -99,13 +105,7 @@ class ESPnetTTSModel(AbsESPnetModel):
             else:
                 # Use precalculated feats (feats_type != raw case)
                 feats, feats_lengths = speech, speech_lengths
-            for b in range(durations.size(0)):
-            #    s = durations[b,:].sum()
-            #    if s < feats_lengths[b]:
-            #        durations[b,-1] += (feats_lengths[b] - s)
-            #    elif s > feats_lengths[b]:
-            #        durations[b,0] -= (s - feats_lengths[b])
-              assert(durations[b,:].sum() == feats_lengths[b])
+
             # Extract auxiliary features
             if self.pitch_extract is not None and pitch is None:
                 raise Exception()
@@ -159,6 +159,9 @@ class ESPnetTTSModel(AbsESPnetModel):
             batch.update(energy=energy, energy_lengths=energy_lengths)
         if self.tts.require_raw_speech:
             batch.update(speech=speech, speech_lengths=speech_lengths)
+        if phone_word_mappings is None:
+            raise Exception()
+        batch.update(phone_word_mappings=phone_word_mappings, phone_word_mappings_lengths=phone_word_mappings_lengths,feats_word_avg=feats_word_avg,feats_word_avg_lengths=feats_word_avg_lengths)
 
         return self.tts(**batch)
 
@@ -174,6 +177,8 @@ class ESPnetTTSModel(AbsESPnetModel):
         pitch_lengths: Optional[torch.Tensor] = None,
         energy: Optional[torch.Tensor] = None,
         energy_lengths: Optional[torch.Tensor] = None,
+        phone_word_mappings: Optional[torch.Tensor] = None,
+        phone_word_mappings_lengths: Optional[torch.Tensor] = None,
         spembs: Optional[torch.Tensor] = None,
         sids: Optional[torch.Tensor] = None,
         lids: Optional[torch.Tensor] = None,
@@ -205,21 +210,6 @@ class ESPnetTTSModel(AbsESPnetModel):
         else:
             # Use precalculated feats (feats_type != raw case)
             feats, feats_lengths = speech, speech_lengths
-        # print(feats)
-        # print(feats.size())
-        # print(feats_lengths)
-        if durations is None:
-            raise Exception(f"No durations passed?")
-        for b in range(durations.size(0)):
-        #    s = durations[b,:].sum() 
-        #    if s < feats_lengths[b]:
-        #        durations[b,-1] += (feats_lengths[b] - s)
-        #    elif s > feats_lengths[b]:
-        #        durations[b,0] -= (s - feats_lengths[b])
-        #   print(durations[b,:].sum())
-        #   print(feats_lengths[b])
-            if durations[b,:].sum() != feats_lengths[b]:
-                raise Exception(f"Mismatch {durations[b,:].sum()} {feats_lengths[b]}")
 
         if self.pitch_extract is not None:
             raise Exception()

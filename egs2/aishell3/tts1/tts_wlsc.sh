@@ -673,7 +673,7 @@ if ! "${skip_train}"; then
     if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
         _train_dir="${data_feats}/${train_set}"
         _valid_dir="${data_feats}/${valid_set}"
-        log "Stage 8: TTS Training: train_set=${_train_dir}, valid_set=${_valid_dir}, config=${train_config}"
+        log "Stage 9: TTS Training: train_set=${_train_dir}, valid_set=${_valid_dir}, config=${train_config}"
 
         _opts=
         if [ -n "${train_config}" ]; then
@@ -798,8 +798,8 @@ fi
 
 
 if ! "${skip_eval}"; then
-    if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
-        log "Stage 9: Decoding: training_dir=${tts_exp}"
+    if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
+        log "Stage 10: Decoding: training_dir=${tts_exp}"
 
         if ${gpu_inference}; then
             _cmd="${cuda_cmd}"
@@ -840,6 +840,8 @@ if ! "${skip_eval}"; then
                 _opts+="--data_path_and_name_and_type ${_data}/pitch,pitch,npy "
                 _opts+="--data_path_and_name_and_type ${_data}/energy,energy,npy "
             fi
+            
+            _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/phone_word_mappings.scp,phone_word_mappings,kaldi_ark  " \
 
             # Add X-vector to the inputs if needed
             if "${use_xvector}"; then
@@ -948,8 +950,8 @@ fi
 packed_model="${tts_exp}/${tts_exp##*/}_${inference_model%.*}.zip"
 if [ -z "${download_model}" ]; then
     # Skip pack preparation if using a downloaded model
-    if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
-        log "Stage 8: Pack model: ${packed_model}"
+    if [ ${stage} -le 11 ] && [ ${stop_stage} -ge 11 ]; then
+        log "Stage 11: Pack model: ${packed_model}"
         log "Warning: Upload model to Zenodo will be deprecated. We encourage to use Hugging Face"
 
         _opts=""

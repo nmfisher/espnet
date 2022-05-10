@@ -117,13 +117,16 @@ def extract(wavs, durations, transcripts, sample_rate, hop_length):
         wav, rate = librosa.load(path[0], sr=sample_rate)
         frames_per_second = sample_rate / hop_length
 
-        f0, t = pyworld.dio(wav.astype(np.double), rate,
-                            frame_period=frames_per_second)
-        
+        f0, t = pyworld.dio(wav.astype(np.double), rate, frame_period=10)#frames_per_second)
+                
         # Domain-conversion: e.g. Stft: time -> time-freq
         input_stft, energy_lengths = stft(torch.tensor(np.expand_dims(wav.astype(np.double), 0)), torch.tensor([wav.shape[0]]))
         input_power = input_stft[..., 0] ** 2 + input_stft[..., 1] ** 2
         energy = torch.sqrt(torch.clamp(input_power.sum(dim=2), min=1.0e-10))
+
+        yield (utt_id, f0,energy)
+        continue
+
         
         last = 0
         es = []
@@ -188,16 +191,16 @@ def main():
     # todo - multi-speaker basis
     f0=np.array(list(itertools.chain.from_iterable([f for utt_id,f,e in train_vals])))
     
-    mean_f0 = f0.mean(axis = 0)
-    stddev_f0 =f0.std(axis = 0)
+    # mean_f0 = f0.mean(axis = 0)
+    # stddev_f0 =f0.std(axis = 0)
 
     energy =np.array(list(itertools.chain.from_iterable([e for utt_id,f,e in train_vals])))
-    mean_e = energy.mean(axis = 0)
-    stddev_e = energy.std(axis=0)
+    # mean_e = energy.mean(axis = 0)
+    # stddev_e = energy.std(axis=0)
 
     # normalize training/validation set based on training means/stddevs
-    train_vals = [ (utt_id, (f0 - mean_f0) / stddev_f0, (energy - mean_e) / stddev_e)  for (utt_id, f0, energy) in train_vals]
-    valid_vals = [ (utt_id, (f0 - mean_f0) / stddev_f0, (energy - mean_e) / stddev_e) for (utt_id, f0, energy) in valid_vals]
+    # train_vals = [ (utt_id, (f0 - mean_f0) / stddev_f0, (energy - mean_e) / stddev_e)  for (utt_id, f0, energy) in train_vals]
+    # valid_vals = [ (utt_id, (f0 - mean_f0) / stddev_f0, (energy - mean_e) / stddev_e) for (utt_id, f0, energy) in valid_vals]
     
     for vals, pitch_out, energy_out, dump_dir in [(train_vals, args.train_pitch_out, args.train_energy_out, args.train_dump_dir), (valid_vals, args.valid_pitch_out,args.valid_energy_out, args.valid_dump_dir)]:
         # dump the actual F0 values to a .npy file
@@ -206,8 +209,10 @@ def main():
             for utt_id, f0, energy in vals:
                 pitch_path = dump_dir + f"/{utt_id}_pitch.npy"
                 energy_path = dump_dir + f"/{utt_id}_energy.npy"
-                np.save(pitch_path,np.expand_dims(f0,1),allow_pickle=False)
-                print(energy)
+                # f0 = np.expand_dims(f0,0)
+                energy = energy[0]
+                np.save(pitch_path,f0,allow_pickle=False)
+                print(f"energy size {energy.shape} pitch size {f0.shape}")
                 np.save(energy_path,energy,allow_pickle=False)
                 pitch_scp.write("{} {}\n".format(utt_id, pitch_path))
                 energy_scp.write("{} {}\n".format(utt_id, energy_path))

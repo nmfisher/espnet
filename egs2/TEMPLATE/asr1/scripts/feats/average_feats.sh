@@ -56,11 +56,12 @@ if [ -f ${data}/feats.scp ]; then
 fi
 
 feats=${data}/feats.scp
+pitch=${data}/pitch
 durations=${data}/durations
 text=${data}/text
 
 ${cmd} JOB=1:${nj} ${logdir}/avg_bfcc_${name}.JOB.log \
-    pyscripts/feats/average-word.py ${feats} ${durations} ${text} ark,scp:${bfccdir}/avg_bfcc_${name}.ark,${bfccdir}/avg_bfcc_${name}.scp ark,scp:${data}/phone_word_mappings.ark,${data}/phone_word_mappings.scp  ark,scp:${data}/word_phone_mappings.ark,${data}/word_phone_mappings.scp 
+    pyscripts/feats/average-word.py ${feats} ${pitch} ${durations} ${text} ark,scp:${bfccdir}/avg_bfcc_${name}.ark,${bfccdir}/avg_bfcc_${name}.scp ark,scp:${data}/phone_word_mappings.ark,${data}/phone_word_mappings.scp  ark,scp:${data}/word_phone_mappings.ark,${data}/word_phone_mappings.scp 
 
 # concatenate the .scp files together.
 for n in $(seq ${nj}); do

@@ -159,6 +159,7 @@ class Text2Speech:
         text: Union[str, torch.Tensor, np.ndarray],
         speech: Union[torch.Tensor, np.ndarray] = None,
         durations: Union[torch.Tensor, np.ndarray] = None,
+        phone_word_mappings:  Union[torch.Tensor, np.ndarray] = None,
         energy: Union[torch.Tensor, np.ndarray] = None,
         pitch: Union[torch.Tensor, np.ndarray] = None,
         spembs: Union[torch.Tensor, np.ndarray] = None,
@@ -176,8 +177,8 @@ class Text2Speech:
             raise RuntimeError("Missing required argument: 'sids'")
         if self.use_lids and lids is None:
             raise RuntimeError("Missing required argument: 'lids'")
-#        if self.use_spembs and spembs is None:
-#            raise RuntimeError("Missing required argument: 'spembs'")
+        if self.use_spembs and spembs is None:
+           raise RuntimeError("Missing required argument: 'spembs'")
         # prepare batch
         if isinstance(text, str):
             text = self.preprocess_fn("<dummy>", dict(text=text))["text"]
@@ -196,6 +197,8 @@ class Text2Speech:
             batch.update(sids=sids)
         if lids is not None:
             batch.update(lids=lids)
+        if phone_word_mappings is not None:
+            batch.update(phone_word_mappings=phone_word_mappings)
         batch = to_device(batch, self.device)
 
         # overwrite the decode configs if provided

@@ -89,7 +89,7 @@ def make_pad_mask(lengths : torch.Tensor, xs:Optional[torch.Tensor] = None, leng
 
     """
     bs = lengths.size(0)
-    maxlen = lengths.max()
+    maxlen = lengths.max().item()
 
     seq_range = torch.arange(0, maxlen, dtype=torch.int64).to(lengths.device)
     

@@ -37,6 +37,7 @@ class WLSCLoss(torch.nn.Module):
         # define criterions
         reduction = "none" if self.use_weighted_masking else "mean"
         self.l1_criterion = torch.nn.L1Loss(reduction=reduction)
+        self.prior_l1_criterion = torch.nn.L1Loss(reduction=reduction)
         self.mse_criterion = torch.nn.MSELoss(reduction=reduction)
         self.duration_criterion = DurationPredictorLoss(reduction=reduction)
 
@@ -49,6 +50,8 @@ class WLSCLoss(torch.nn.Module):
         ds: torch.Tensor,
         ilens: torch.Tensor,
         olens: torch.Tensor,
+        prior_out: torch.Tensor,
+        word_enc_out: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Calculate forward propagation.
 
@@ -81,6 +84,8 @@ class WLSCLoss(torch.nn.Module):
             d_outs = d_outs.masked_select(duration_masks)
             ds = ds.masked_select(duration_masks)
 
+
+
         # calculate loss
         l1_loss = self.l1_criterion(before_outs, ys)
         if after_outs is not None:
@@ -103,5 +108,5 @@ class WLSCLoss(torch.nn.Module):
             duration_loss = (
                 duration_loss.mul(duration_weights).masked_select(duration_masks).sum()
             )
-
-        return l1_loss, duration_loss
+        prior_loss = self.prior_l1_criterion(prior_out, word_enc_out)
+        return l1_loss, duration_loss, prior_loss

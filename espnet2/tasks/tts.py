@@ -33,6 +33,7 @@ from espnet2.tts.abs_tts import AbsTTS
 from espnet2.tts.espnet_model import ESPnetTTSModel
 from espnet2.tts.fastspeech import FastSpeech
 from espnet2.tts.fastspeech2 import FastSpeech2
+from espnet2.tts.wlsc import WLSC
 from espnet2.tts.feats_extract.abs_feats_extract import AbsFeatsExtract
 from espnet2.tts.feats_extract.dio import Dio
 from espnet2.tts.feats_extract.energy import Energy
@@ -101,6 +102,7 @@ tts_choices = ClassChoices(
         transformer=Transformer,
         fastspeech=FastSpeech,
         fastspeech2=FastSpeech2,
+        wlsc=WLSC,
         # NOTE(kan-bayashi): available only for inference
         vits=VITS,
         joint_text2wav=JointText2Wav,
@@ -268,10 +270,10 @@ class TTSTask(AbsTask):
         cls, train: bool = True, inference: bool = False
     ) -> Tuple[str, ...]:
         if not inference:
-            retval = ("spembs", "durations", "pitch", "energy", "sids", "lids")
+            retval = ("spembs", "durations", "pitch", "energy", "sids", "lids", "phone_word_mappings","word_phone_mappings")
         else:
             # Inference mode
-            retval = ("spembs", "speech", "durations", "pitch", "energy", "sids", "lids")
+            retval = ("spembs", "speech", "durations", "pitch", "energy", "sids", "lids", "phone_word_mappings", "word_phone_mappings")
         return retval
 
     @classmethod
@@ -288,7 +290,7 @@ class TTSTask(AbsTask):
             token_list = args.token_list.copy()
         else:
             raise RuntimeError("token_list must be str or dict")
-
+        
         vocab_size = len(token_list)
         # logging.info(f"Vocabulary size: {vocab_size }")
         
@@ -311,7 +313,10 @@ class TTSTask(AbsTask):
             normalize = normalize_class(**args.normalize_conf)
         else:
             normalize = None
+        if args.tts_conf is None:
+            args.tts_conf = {}
         args.tts_conf["spks"] = args.num_speakers
+        args.tts_conf["num_speakers"] = args.num_speakers
         # 3. TTS
         tts_class = tts_choices.get_class(args.tts)
         tts = tts_class(idim=vocab_size, odim=odim, **args.tts_conf)
