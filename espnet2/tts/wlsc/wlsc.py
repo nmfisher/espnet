@@ -37,6 +37,11 @@ from espnet2.torch_utils.device_funcs import force_gatherable
 from espnet2.torch_utils.initialize import initialize
 from espnet2.tts.abs_tts import AbsTTS
 from espnet2.tts.fastspeech2.variance_predictor import VariancePredictor
+from espnet2.tts.gst.style_encoder import MultiHeadedAttention
+from espnet.nets.pytorch_backend.transformer.attention import (
+    MultiHeadedAttention as BaseMultiHeadedAttention,  # NOQA
+)
+
 
 from espnet2.tts.wlsc.loss import WLSCLoss
 
@@ -70,48 +75,28 @@ class GaussianUpsampler(torch.nn.Module):
         weights = torch.exp(-0.5 * (((t-c)/r)**2)) / (r * self.r2pi)
         weights += 1e-6
         weights_denom = weights.sum(2).unsqueeze(-1).expand(weights.size())
-        if torch.any(torch.isnan(weights)):
-            print(r)
-            print((((t-c)/r)**2))
-            raise Exception(weights)
-
-        if torch.any(weights_denom == 0):
-            print(durations)
-            print(c)
-            print(t)
-            print(r)
-            print(weights)
-            print(weights_denom)
-            raise Exception(upsampled)
 
         weights_normalized = weights / weights_denom
-        if torch.any(torch.isnan(weights_normalized)):
-            print(durations)
-            print(c)
-            print(t)
-            print(r)
-            print(weights)
-            raise Exception(weights_normalized)
+        
         upsampled = torch.matmul(weights_normalized, feats)
-        if torch.any(torch.isnan(upsampled)):
-            print(durations)
-            print(c)
-            print(t)
-            print(r)
-            print(weights)
-            raise Exception(upsampled)
+        
         return upsampled
 
 class WordStyleEncoder(torch.nn.Module):
-    def __init__(self,idim, gru_units, gru_layers, num_style_tokens=15, style_token_dim=256, num_attn_heads=4):
+    def __init__(self,idim, style_token_dim, gru_layers, num_style_tokens=15, num_attn_heads=4):
         super().__init__()
         self.num_style_tokens = num_style_tokens
         self.style_tokens = torch.nn.Parameter(torch.randn(1, self.num_style_tokens,style_token_dim))
-        self.gru = torch.nn.GRU(idim, gru_units, gru_layers, batch_first=True)
-        self.gru_units = gru_units
+        self.gru = torch.nn.GRU(idim, style_token_dim, gru_layers, batch_first=True)
+        self.gru_units = style_token_dim
         self.gru.flatten_parameters()
         self.gru_layers = gru_layers
-        self.attn = torch.nn.MultiheadAttention(gru_units,num_attn_heads, kdim=style_token_dim, vdim=style_token_dim, batch_first=True)
+        # self.attn = torch.nn.MultiheadAttention(style_token_dim,num_attn_heads, kdim=style_token_dim, vdim=style_token_dim, batch_first=True)
+        self.attn = BaseMultiHeadedAttention(
+            num_attn_heads,
+            style_token_dim,
+            0,
+        )
 
     # feats_averaged is BxLwxF
     # phone_word_mappings is BxLp
@@ -122,17 +107,19 @@ class WordStyleEncoder(torch.nn.Module):
         outs, _ = self.gru(feats_averaged)
         st = self.style_tokens.expand(outs.size(0), -1, -1)
 
-        encoded = []
-        # MHA doesn't accept 3D inputs?
-        for i in range(outs.size(1)):
-          word = outs[:,i].unsqueeze(1) # this is the i'th word for all sequences in the batch       
-          attn_out, attn_w = self.attn(word,st,st)
-          encoded += [attn_out]
-        return torch.cat(encoded, 1)
+        # encoded = []
+        # # MHA doesn't accept 3D inputs?
+        # # for i in range(outs.size(1)):
+        # word = outs[:,i].unsqueeze(1) # this is the i'th word for all sequences in the batch       
+        # print(st.size())
+        # print(word.size())
+        # attn_out, attn_w = self.attn(word,st,st,None)
+        # raise Exception(attn_out.size())
+        # encoded += [attn_out.unsqueeze(0)]   
 
-    def inference(self, phone_word_mappings):
-        num_words=phone_word_mappings.max().item()+1
-        return self.style_tokens[0,[0]*num_words]
+        attn_out = self.attn(outs, st, st, None)
+        # raise Exception(attn_out.size())
+        return attn_out
 
 class WLSC(AbsTTS):
     """WLSC module for end-to-end text-to-speech."""
@@ -194,7 +181,8 @@ class WLSC(AbsTTS):
             )
         self.word_seq_proj_dim = 128
         self.word_seq_proj = torch.nn.Linear(256, self.word_seq_proj_dim)
-        self.word_style_encoder = WordStyleEncoder(self.odim,self.embed_dim, 2)
+        self.style_token_dim = 256
+        self.word_style_encoder = WordStyleEncoder(self.odim,self.style_token_dim, 2)
 
         # self.dec = Decoder(
         #     384,
@@ -213,7 +201,7 @@ class WLSC(AbsTTS):
             attention_dropout_rate=0.0,
         )
 
-        self.prior = PriorEncoder(idim=640, gru_units=512,gru_layers=2)
+        self.prior = PriorEncoder(idim=640, gru_units=self.style_token_dim,gru_layers=2)
 
         self.feat_out = torch.nn.Linear(1152, odim)
 
@@ -398,11 +386,7 @@ class WLSC(AbsTTS):
         # pitch = F.pad(pitch, [0, 1], "constant", 0)
 
         d_masks = make_pad_mask(ilens).to(text.device)
-
-        if torch.any(torch.isnan(feats_word_avg)):
-            print(feats_word_avg.size())
-            raise Exception(feats_word_avg)
-        
+       
         # encode style
         word_style_enc = self.word_style_encoder(feats_word_avg)
 
@@ -423,8 +407,11 @@ class WLSC(AbsTTS):
         # (the only reason we needed to do so when averaging is because we use matmul for averaging)
         concatenated = self.concatenate(word_enc_out, phone_enc_proj, phone_word_mappings, word_style_enc)
 
+        if word_style_enc.size(-1) != prior_out.size(-1):
+            raise Exception();
+
         # predict durations & ranges        
-        d_outs = self.duration_predictor(concatenated, d_masks).int()
+        d_outs = self.duration_predictor(concatenated, d_masks)
         r_outs = self.range_predictor(concatenated, d_masks)
 
         # apply Gaussian upsampling
@@ -451,7 +438,7 @@ class WLSC(AbsTTS):
         l1_loss, duration_loss, prior_loss = self.criterion(
             after_outs=before_outs,
             before_outs=after_outs,
-            word_enc_out=word_enc_out,
+            word_style_enc=word_style_enc,
             prior_out=prior_out,
             d_outs=d_outs,
             ys=feats,
@@ -459,7 +446,7 @@ class WLSC(AbsTTS):
             ilens=ilens,
             olens=feats_lengths,
         )
-        loss = l1_loss + duration_loss + prior_loss
+        loss = duration_loss + l1_loss + prior_loss
 
         stats = dict(
             l1_loss=l1_loss.item(),
@@ -576,11 +563,6 @@ class WLSC(AbsTTS):
 
         d_masks = make_pad_mask(ilens).to(text.device)
         
-        # encode style
-        # word_style_enc = self.word_style_encoder.inference(phone_word_mappings)
-
-        # word_style_enc = word_style_enc.unsqueeze(0)
-
         # encode phone sequence
         phone_enc, _ = self.enc(text, ilens)
 
@@ -590,12 +572,12 @@ class WLSC(AbsTTS):
         # average by word boundaries
         phone_enc_averaged = self.average(phone_enc_proj, phone_word_mappings, d_masks)
 
-        word_enc_out, _ = self.word_seq_enc(phone_enc_averaged.detach())
+        word_enc_out, _ = self.word_seq_enc(phone_enc_averaged)
 
-        prior_out = self.prior(phone_enc_averaged.detach(), word_enc_out.detach())  
+        prior_out = self.prior(phone_enc_averaged, word_enc_out)  
 
-        # don't bother with masking here because we can take care of this in the loss calculation
-        # (the only reason we needed to do so when averaging is because we use matmul)
+        prior_out += (0.1 * self.word_style_encoder.style_tokens[:,3,:].unsqueeze(1).expand(prior_out.size()))
+
         concatenated = self.concatenate(word_enc_out, phone_enc_proj, phone_word_mappings, prior_out)
 
         # forward duration predictor and variance predictors        
@@ -603,7 +585,7 @@ class WLSC(AbsTTS):
         r_outs = self.range_predictor.inference(concatenated, d_masks)
 
         # apply Gaussian upsampling
-        upsampled = self.length_regulator(concatenated, r_outs, durations.unsqueeze(0))  # (B, T_feats, adim)
+        upsampled = self.length_regulator(concatenated, r_outs, d_outs) #durations.unsqueeze(0))  # (B, T_feats, adim)
         
         h_masks = torch.ones(1, upsampled.size(1), dtype=torch.bool).to(concatenated.device)
         
