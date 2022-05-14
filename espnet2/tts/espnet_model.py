@@ -145,6 +145,7 @@ class ESPnetTTSModel(AbsESPnetModel):
         )
 
         # Update batch for additional auxiliary inputs
+        
         if spembs is not None:
             batch.update(spembs=spembs)
         if sids is not None:

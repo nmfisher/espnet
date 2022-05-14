@@ -336,58 +336,12 @@ if ! "${skip_data_prep}"; then
         # Extract X-vector
         if "${use_xvector}"; then
             log "Stage 2+: Extract X-vector: data/ -> ${dumpdir}/xvector (Require Kaldi)"
-            # Download X-vector pretrained model
-            xvector_exp=${expdir}/xvector_nnet_1a
-            if [ ! -e "${xvector_exp}" ]; then
-                log "X-vector model does not exist. Download pre-trained model."
-                wget http://kaldi-asr.org/models/8/0008_sitw_v2_1a.tar.gz
-                tar xvf 0008_sitw_v2_1a.tar.gz
-                [ ! -e "${expdir}" ] && mkdir -p "${expdir}"
-                mv 0008_sitw_v2_1a/exp/xvector_nnet_1a "${xvector_exp}"
-                rm -rf 0008_sitw_v2_1a.tar.gz 0008_sitw_v2_1a
-            fi
-
-            # Generate the MFCC features, VAD decision, and X-vector
-            for dset in "${train_set}" "${valid_set}" ${test_sets}; do
-                # 1. Copy datadir and resample to 16k
-                utils/copy_data_dir.sh "data/${dset}" "${dumpdir}/mfcc/${dset}"
-                utils/data/resample_data_dir.sh 16000 "${dumpdir}/mfcc/${dset}"
-
-                # 2. Extract mfcc features
-                _nj=$(min "${nj}" "$(<${dumpdir}/mfcc/${dset}/utt2spk wc -l)")
-                steps/make_mfcc.sh --nj "${_nj}" --cmd "${train_cmd}" \
-                    --write-utt2num-frames true \
-                    --mfcc-config conf/mfcc.conf \
-                    "${dumpdir}/mfcc/${dset}"
-                utils/fix_data_dir.sh "${dumpdir}/mfcc/${dset}"
-
-                # 3. Compute VAD decision
-                _nj=$(min "${nj}" "$(<${dumpdir}/mfcc/${dset}/spk2utt wc -l)")
-                sid/compute_vad_decision.sh --nj ${_nj} --cmd "${train_cmd}" \
-                    --vad-config conf/vad.conf \
-                    "${dumpdir}/mfcc/${dset}"
-                utils/fix_data_dir.sh "${dumpdir}/mfcc/${dset}"
-
-                # 4. Extract X-vector
-                sid/nnet3/xvector/extract_xvectors.sh --nj "${_nj}" --cmd "${train_cmd}" \
-                    "${xvector_exp}" \
-                    "${dumpdir}/mfcc/${dset}" \
-                    "${dumpdir}/xvector/${dset}"
-
-                # 5. Filter scp
-                # NOTE(kan-bayashi): Since sometimes mfcc or x-vector extraction is failed,
-                #   the number of utts will be different from the original features (raw or fbank).
-                #   To avoid this mismatch, perform filtering of the original feature scp here.
-                if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
-                    _suf="/org"
-                else
-                    _suf=""
-                fi
-                cp "${data_feats}${_suf}/${dset}"/wav.{scp,scp.bak}
-                <"${data_feats}${_suf}/${dset}/wav.scp.bak" \
-                    utils/filter_scp.pl "${dumpdir}/xvector/${dset}/xvector.scp" \
-                    >"${data_feats}${_suf}/${dset}/wav.scp"
-                utils/fix_data_dir.sh "${data_feats}${_suf}/${dset}"
+            mkdir -p ${dumpdir}/xvector/${train_set} ${dumpdir}/xvector/${valid_set}
+            ./scripts/feats/extract_spkembs.sh ${data_feats}/${train_set}/wav.scp "ark,scp:${dumpdir}/xvector/${train_set}/xvector.ark,${dumpdir}/xvector/${train_set}/xvector.scp" ${data_feats}/${train_set}/utt2spk ${dumpdir}/xvector/xvector_stats 1
+            ./scripts/feats/extract_spkembs.sh ${data_feats}/${valid_set}/wav.scp "ark,scp:${dumpdir}/xvector/${valid_set}/xvector.ark,${dumpdir}/xvector/${valid_set}/xvector.scp" ${data_feats}/${valid_set}/utt2spk ${dumpdir}/xvector/xvector_stats
+            for dset in ${test_sets}; do
+                mkdir -p ${dumpdir}/xvector/${dset}
+                ./scripts/feats/extract_spkembs.sh ${data_feats}/${dset}/wav.scp "ark,scp:${dumpdir}/xvector/${dset}/xvector.ark,${dumpdir}/xvector/${dset}/xvector.scp" ${data_feats}/${dset}/utt2spk ${dumpdir}/xvector/xvector_stats
             done
         fi
 
@@ -485,13 +439,13 @@ if ! "${skip_data_prep}"; then
 
             utils/fix_data_dir.sh ${_fix_opts} "${data_feats}/${dset}"
 
-            # Filter x-vector
-            if "${use_xvector}"; then
-                cp "${dumpdir}/xvector/${dset}"/xvector.{scp,scp.bak}
-                <"${dumpdir}/xvector/${dset}/xvector.scp.bak" \
-                    utils/filter_scp.pl "${data_feats}/${dset}/wav.scp"  \
-                    >"${dumpdir}/xvector/${dset}/xvector.scp"
-            fi
+            # # Filter x-vector
+            # if "${use_xvector}"; then
+            #     cp "${dumpdir}/xvector/${dset}"/xvector.{scp,scp.bak}
+            #     <"${dumpdir}/xvector/${dset}/xvector.scp.bak" \
+            #         utils/filter_scp.pl "${data_feats}/${dset}/wav.scp"  \
+            #         >"${dumpdir}/xvector/${dset}/xvector.scp"
+            # fi
         done
     fi
 else
@@ -682,6 +636,12 @@ if ! "${skip_train}"; then
             _opts+="--config ${train_config} "
         fi
 
+         if "${use_xvector}"; then
+            _xvector_train_dir="${dumpdir}/xvector/${train_set}"
+            _xvector_valid_dir="${dumpdir}/xvector/${valid_set}"
+            _opts+="--train_data_path_and_name_and_type ${_xvector_train_dir}/xvector.scp,spembs,kaldi_ark "
+            _opts+="--valid_data_path_and_name_and_type ${_xvector_valid_dir}/xvector.scp,spembs,kaldi_ark "
+        fi
 
         _teacher_train_dir="${teacher_dumpdir}/${train_set}"
         _teacher_valid_dir="${teacher_dumpdir}/${valid_set}"

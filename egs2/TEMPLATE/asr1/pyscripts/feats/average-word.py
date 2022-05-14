@@ -75,7 +75,7 @@ def main():
                             
                             # pitch = np.fromfile(pitch_file[0])
                             phone_indices = np.arange(P)
-                            word_boundaries = phone_indices[[x for x in range(len(phones)) if phones[x].endswith("E") or phones[x] == "SPN"]]
+                            word_boundaries = phone_indices[[x for x in range(len(phones)) if phones[x].endswith("E") or phones[x] in ["SPN","SIL"]]]
                             W = len(word_boundaries)
 
                             # use this to create a list of P elements (where P is the length of [phones]), 
@@ -90,16 +90,16 @@ def main():
                             
                             word_idx = 0
                             durations = [int(x) for x in durations]
-                            print(f"Duratons : {durations}")
-                            print(f"feats {feats.shape}")
-                            print(f"word_boundaries {word_boundaries}")
+                            #print(f"Duratons : {durations}")
+                            #print(f"feats {feats.shape}")
+                            #print(f"word_boundaries {word_boundaries}")
                             for i in range(len(word_boundaries)):
                                 word_end_idx = word_boundaries[i]
                                 word_start_idx = word_boundaries[i-1]+1 if i > 0 else 0
                                 num_phones = 1 + word_end_idx - word_start_idx
                                 num_frames = sum(durations[word_start_idx:word_end_idx+1])
                                 frame_offset = sum(durations[:word_start_idx]) if i > 0 else 0
-                                print(f"num_frames {num_frames} frame_offset {frame_offset}")    
+                                # print(f"num_frames {num_frames} frame_offset {frame_offset}")    
                                 word_feats = np.array(feats[frame_offset:frame_offset+num_frames])
 
                                 stacked = word_feats #np.hstack([word_feats,word_pitch])
@@ -114,12 +114,11 @@ def main():
                                 word_idx += 1
                                 
                             if len(phone_word_mappings) != len(phones):
-                                raise Exception(f"Word mapping mismatch for phones {len(phones)} {phones}, word boundaries were {word_boundaries}, mappings {len(phone_word_mappings)} were {phone_word_mappings}")
+                                raise Exception(f"Word mapping mismatch for {utt_id} phones length {len(phones)} {phones}, durations {durations} word boundaries were {word_boundaries}, mappings {len(phone_word_mappings)} were {phone_word_mappings}")
                             
                             writer(utt_id, np.vstack(feats_avg))
                             phone_word_mapping_writer(utt_id, np.array(phone_word_mappings,dtype=np.int32))
                             word_phone_mapping_writer(utt_id, word_phone_mappings)
-                            print(utt_id)
 
 
 if __name__ == "__main__":

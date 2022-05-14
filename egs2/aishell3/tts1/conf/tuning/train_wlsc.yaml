@@ -15,7 +15,7 @@
 ##########################################################
 tts: wlsc      # model architecture
 tts_conf:             # keyword arguments for the selected model
-
+    spk_embed_dim: 2048
 
 # extra module for additional inputs
 #pitch_extract: dio           # pitch extractor type
@@ -28,11 +28,11 @@ tts_conf:             # keyword arguments for the selected model
 ##########################################################
 optim: adam            # optimizer type
 optim_conf:            # keyword arguments for selected optimizer
-    lr: 1.0            # learning rate
+    lr: 0.5            # learning rate
 scheduler: noamlr      # scheduler type
 scheduler_conf:        # keyword arguments for selected scheduler
-    model_size: 384    # model size, a.k.a., attention dimension
-    warmup_steps: 4000 # the number of warmup steps
+    model_size: 1024    # model size, a.k.a., attention dimension
+    warmup_steps: 1000 # the number of warmup steps
 
 ##########################################################
 #                OTHER TRAINING SETTING                  #
