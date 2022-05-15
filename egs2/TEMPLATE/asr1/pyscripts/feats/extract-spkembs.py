@@ -12,6 +12,8 @@ from espnet.utils.cli_utils import get_commandline_args
 import scipy.io.wavfile
 from kaldiio import ReadHelper, WriteHelper
 import subprocess
+import numpy as np
+from sklearn.decomposition import PCA
 
 def get_parser():
     parser = argparse.ArgumentParser(
@@ -20,21 +22,22 @@ def get_parser():
     )
     parser.add_argument("--verbose", "-V", default=0, type=int, help="Verbose option")
     parser.add_argument(
-        "wavs", type=str, help="Path to wav.scp (no scp prefix needed)"
+        "train_wavs", type=str, help="Path to wav.scp (no scp prefix needed)"
     )
     parser.add_argument(
-        "outs", type=str, help="wspecifier for outputs (e.g. 'ark,scp:xvectors.ark,xvector.scp')"
+        "test_wavs", type=str, help="Path to wav.scp (no scp prefix needed)"
     )
     parser.add_argument(
-        "utt2spk", type=str, help="utt<->spk lookup"
+        "train_outs", type=str, help="wspecifier for outputs (e.g. 'ark,scp:xvectors.ark,xvector.scp')"
     )
     parser.add_argument(
-        "--stats", type=str, help="path to existing mel spec mean/stdev. Must be provided if --stats_out is not provided", required=False
+        "test_outs", type=str, help="wspecifier for test outputs (e.g. 'ark,scp:xvectors.ark,xvector.scp')"
     )
     parser.add_argument(
-        "--stats_out", type=str, help="path where mel spec mean/stdev. Must be provided if --stats_out is not provided", required=False
+        "stats", type=str, help="path where stats (melspec mean/stddev) will be written.", 
     )
     return parser
+
 
 
 def main():
@@ -52,11 +55,6 @@ def main():
     device = torch.device('cuda')
     cfg = load_yaml_config('/home/hydroxide/projects/byol-a/config.yaml')
 
-    utt2spk = {}
-    for line in open(args.utt2spk, "r").readlines():
-        split = line.strip().split(" ")
-        utt2spk[split[0]] = split[1]
-
     # Preprocessor and normalizer.
     to_melspec = torchaudio.transforms.MelSpectrogram(
         sample_rate=cfg.sample_rate,
@@ -68,34 +66,26 @@ def main():
         f_max=cfg.f_max,
     )
 
-    spkr_vectors={}
-    spkr_counts={}
-
     vals=[]
-
     if args.stats is None:
-        print(f"Calculating stats, will be written to {args.stats_out}")
-        if args.stats_out is None:
-            raise Exception("--stats_out must be specified if --stats is empty")
-        # first pass through to calculate mean and stddev
-        count=0
-        for line in open(args.wavs).readlines():
-            split=line.strip().split(" ")
-            utt_id = split[0]
-            
-            wav, sr = torchaudio.load(split[1]) # a sample from SPCV2 for now
-            if sr != cfg.sample_rate:
-                raise Exception("Expected sample rate %d but %d was provided for %s, please make sure all audio inputs are resampled first." % (cfg.sample_rate, sr, utt_id))
-            melspec = to_melspec(wav).reshape(-1)
-            
-            vals += [ (melspec + torch.finfo(torch.float).eps).log() ]
-        all = np.concatenate(vals)
-        stats = np.array([all.mean(), all.std()])
-        stats.tofile(args.stats_out)
-        print(f"Wrote stats to {args.stats_out}")
-        stats = np.fromfile(args.stats_out,dtype=np.float32)
-    else:
-        stats = np.fromfile(args.stats,dtype=np.float32)
+        raise Exception("Stats path must be provided")
+    print(f"Calculating stats, will be written to {args.stats}")
+    # first pass through to calculate mean and stddev
+    count=0
+    for line in open(args.train_wavs).readlines():
+        split=line.strip().split(" ")
+        utt_id = split[0]
+        
+        wav, sr = torchaudio.load(split[1]) # a sample from SPCV2 for now
+        if sr != cfg.sample_rate:
+            raise Exception("Expected sample rate %d but %d was provided for %s, please make sure all audio inputs are resampled first." % (cfg.sample_rate, sr, utt_id))
+        melspec = to_melspec(wav).reshape(-1)
+        
+        vals += [ (melspec + torch.finfo(torch.float).eps).log() ]
+    all = np.concatenate(vals)
+    stats = np.array([all.mean(), all.std()])
+    stats.tofile(args.stats)
+    print(f"Wrote stats to {args.stats}")
     
     # Mean and standard deviation of the log-mel spectrogram of input audio samples, pre-computed.
     # See calc_norm_stats in evaluate.py for your reference.
@@ -106,10 +96,10 @@ def main():
     
     normalizer = PrecomputedNorm(stats)
 
-    utt_ids = []
-
-    with WriteHelper(args.outs) as writer:
-        for line in open(args.wavs).readlines():
+    def vectorize(wavs):
+        utt_ids =[]
+        vecs = []
+        for line in open(wavs).readlines():
             split=line.strip().split(" ")
             utt_id = split[0]
 
@@ -123,22 +113,45 @@ def main():
             lms = normalizer((melspec + torch.finfo(torch.float).eps).log())
 
             # Now, convert the audio to the representation.
-            spkr = utt2spk[utt_id]
             vec = model(lms.unsqueeze(0)).cpu().detach().numpy()
+            vecs.append(vec)
+        return utt_ids, np.concatenate(vecs, 0)
 
+    def average(utt_ids, vecs):
+        spkr_vectors={}
+        for i in range(len(utt_ids)):
+            utt_id=utt_ids[i]
+            spkr=utt_id.split("-")[0]
             if spkr not in spkr_vectors:
                 spkr_vectors[spkr] = {
                     "count":1,
-                    "vector":vec
+                    "vector":vecs[i]
                 }
             else:
-                spkr_vectors[spkr]["vector"] += vec
+                spkr_vectors[spkr]["vector"] += vecs[i]
                 spkr_vectors[spkr]["count"] += 1
-        
-        for utt_id in utt_ids:
-            averaged = spkr_vectors[utt2spk[utt_id]]["vector"] / spkr_vectors[utt2spk[utt_id]]["count"]
-            print(averaged)
-            writer(utt_id, averaged)
+        for spkr in spkr_vectors.keys():
+            spkr_vectors[spkr]["vector"] / spkr_vectors[spkr]["count"]
+        return spkr_vectors
+
+    train_utt_ids, train_vecs  = vectorize(args.train_wavs)
+    test_utt_ids, test_vecs  = vectorize(args.test_wavs)
+
+    pca=PCA(n_components=128)
+    train_vecs = pca.fit_transform(train_vecs)
+    test_vecs = pca.transform(test_vecs)
+
+    train_vecs = average(train_utt_ids, train_vecs)
+    test_vecs = average(test_utt_ids, test_vecs)
     
+    with WriteHelper(args.train_outs) as writer:
+        for i in range(len(train_utt_ids)):
+            utt_id = train_utt_ids[i]
+            writer(utt_id, train_vecs[utt_id.split("-")[0]]["vector"])
+    with WriteHelper(args.test_outs) as writer:
+        for i in range(len(test_utt_ids)):
+            utt_id = test_utt_ids[i]
+            writer(utt_id, test_vecs[utt_id.split("-")[0]]["vector"])
+        
 if __name__ == "__main__":
     main()

@@ -25,23 +25,20 @@ echo "$0 $*" 1>&2 # Print the command line for logging
 
 . parse_options.sh || exit 1;
 
-if [ $# -lt 4 ] || [ $# -gt 5 ]; then
+if [ $# -lt 5 ] || [ $# -gt 5 ]; then
     echo "${help_message}" 1>&2
     exit 1;
 fi
 
 set -euo pipefail
 
-wav=$1
-out=$2
-utt2spk=$3
-stats=$4
-create_stats=
-if [ $# -eq 5 ]; then
-  create_stats=$5
-fi
+train_wav=$1
+test_wav=$2
+train_out=$3
+test_out=$4
+stats=$5
 
-data=$(dirname ${wav})
+data=$(dirname ${train_wav})
 logdir=${data}/log
 mkdir -p ${logdir}
 
@@ -51,13 +48,7 @@ hop_length=160
 # TODO - put sample rate/hop_len/num clusters etc into config
 nj=1
 echo "Extracting speaker embeddings"
-_opts="$wav $out $utt2spk"
-
-if [ -z "$create_stats" ]; then
-  _opts+=" --stats $stats"
-else
-  _opts+=" --stats_out $stats"
-fi
+_opts="$train_wav $test_wav $train_out $test_out $stats"
 
 echo "Using spkembs opts $_opts"
 

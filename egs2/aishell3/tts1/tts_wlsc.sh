@@ -337,12 +337,12 @@ if ! "${skip_data_prep}"; then
         if "${use_xvector}"; then
             log "Stage 2+: Extract X-vector: data/ -> ${dumpdir}/xvector (Require Kaldi)"
             mkdir -p ${dumpdir}/xvector/${train_set} ${dumpdir}/xvector/${valid_set}
-            ./scripts/feats/extract_spkembs.sh ${data_feats}/${train_set}/wav.scp "ark,scp:${dumpdir}/xvector/${train_set}/xvector.ark,${dumpdir}/xvector/${train_set}/xvector.scp" ${data_feats}/${train_set}/utt2spk ${dumpdir}/xvector/xvector_stats 1
-            ./scripts/feats/extract_spkembs.sh ${data_feats}/${valid_set}/wav.scp "ark,scp:${dumpdir}/xvector/${valid_set}/xvector.ark,${dumpdir}/xvector/${valid_set}/xvector.scp" ${data_feats}/${valid_set}/utt2spk ${dumpdir}/xvector/xvector_stats
-            for dset in ${test_sets}; do
-                mkdir -p ${dumpdir}/xvector/${dset}
-                ./scripts/feats/extract_spkembs.sh ${data_feats}/${dset}/wav.scp "ark,scp:${dumpdir}/xvector/${dset}/xvector.ark,${dumpdir}/xvector/${dset}/xvector.scp" ${data_feats}/${dset}/utt2spk ${dumpdir}/xvector/xvector_stats
-            done
+            ./scripts/feats/extract_spkembs.sh \
+                ${data_feats}${_suf}/${train_set}/wav.scp \
+                ${data_feats}${_suf}/${valid_set}/wav.scp \
+                "ark,scp:${data_feats}${_suf}/${train_set}/xvector.ark,${data_feats}${_suf}/${train_set}/xvector.scp" \
+                "ark,scp:${data_feats}${_suf}/${valid_set}/xvector.ark,${data_feats}${_suf}/${valid_set}/xvector.scp" \
+                ${dumpdir}/xvector/xvector_stats
         fi
 
         # Prepare spk id input
@@ -439,13 +439,13 @@ if ! "${skip_data_prep}"; then
 
             utils/fix_data_dir.sh ${_fix_opts} "${data_feats}/${dset}"
 
-            # # Filter x-vector
-            # if "${use_xvector}"; then
-            #     cp "${dumpdir}/xvector/${dset}"/xvector.{scp,scp.bak}
-            #     <"${dumpdir}/xvector/${dset}/xvector.scp.bak" \
-            #         utils/filter_scp.pl "${data_feats}/${dset}/wav.scp"  \
-            #         >"${dumpdir}/xvector/${dset}/xvector.scp"
-            # fi
+            # Filter x-vector
+            if "${use_xvector}"; then
+                cp "${data_feats}${_suf}/${dset}"/xvector.{scp,scp.bak}
+                <"${data_feats}${_suf}/${dset}/xvector.scp.bak" \
+                    utils/filter_scp.pl "${data_feats}/${dset}/wav.scp"  \
+                    >"${data_feats}/${dset}/xvector.scp"
+            fi
         done
     fi
 else
@@ -525,8 +525,8 @@ if ! "${skip_train}"; then
         _type=kaldi_ark
 
         if "${use_xvector}"; then
-            _xvector_train_dir="${dumpdir}/xvector/${train_set}"
-            _xvector_valid_dir="${dumpdir}/xvector/${valid_set}"
+            _xvector_train_dir="${data_feats}/${train_set}"
+            _xvector_valid_dir="${data_feats}/${valid_set}"
             _opts+="--train_data_path_and_name_and_type ${_xvector_train_dir}/xvector.scp,spembs,kaldi_ark "
             _opts+="--valid_data_path_and_name_and_type ${_xvector_valid_dir}/xvector.scp,spembs,kaldi_ark "
         fi
@@ -637,8 +637,8 @@ if ! "${skip_train}"; then
         fi
 
          if "${use_xvector}"; then
-            _xvector_train_dir="${dumpdir}/xvector/${train_set}"
-            _xvector_valid_dir="${dumpdir}/xvector/${valid_set}"
+            _xvector_train_dir="${data_feats}/${train_set}"
+            _xvector_valid_dir="${data_feats}/${valid_set}"
             _opts+="--train_data_path_and_name_and_type ${_xvector_train_dir}/xvector.scp,spembs,kaldi_ark "
             _opts+="--valid_data_path_and_name_and_type ${_xvector_valid_dir}/xvector.scp,spembs,kaldi_ark "
         fi
@@ -805,7 +805,7 @@ if ! "${skip_eval}"; then
 
             # Add X-vector to the inputs if needed
             if "${use_xvector}"; then
-                _xvector_dir="${dumpdir}/xvector/${dset}"
+                _xvector_dir="${data_feats}/${dset}"
                 _ex_opts+="--data_path_and_name_and_type ${_xvector_dir}/xvector.scp,spembs,kaldi_ark "
             fi
 

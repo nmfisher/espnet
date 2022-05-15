@@ -15,7 +15,7 @@
 ##########################################################
 tts: wlsc      # model architecture
 tts_conf:             # keyword arguments for the selected model
-    spk_embed_dim: 2048
+    spk_embed_dim: 128
 
 # extra module for additional inputs
 #pitch_extract: dio           # pitch extractor type
@@ -28,11 +28,11 @@ tts_conf:             # keyword arguments for the selected model
 ##########################################################
 optim: adam            # optimizer type
 optim_conf:            # keyword arguments for selected optimizer
-    lr: 0.5            # learning rate
+    lr: 1            # learning rate
 scheduler: noamlr      # scheduler type
 scheduler_conf:        # keyword arguments for selected scheduler
-    model_size: 1024    # model size, a.k.a., attention dimension
-    warmup_steps: 1000 # the number of warmup steps
+    model_size: 1536    # model size, a.k.a., attention dimension
+    warmup_steps: 4000 # the number of warmup steps
 
 ##########################################################
 #                OTHER TRAINING SETTING                  #
@@ -43,7 +43,7 @@ grad_clip: 1.0            # gradient clipping norm
 grad_noise: false         # whether to use gradient noise injection
 accum_grad: 1             # gradient accumulation
 # batch_bins: 1800000      # batch bins (feats_type=raw)
-batch_bins: 37500      # batch bins (feats_type=raw)
+batch_bins: 17500      # batch bins (feats_type=raw)
 batch_type: numel         # how to make batch
 sort_in_batch: descending # how to sort data in making batch
 sort_batch: descending    # how to sort created batches
