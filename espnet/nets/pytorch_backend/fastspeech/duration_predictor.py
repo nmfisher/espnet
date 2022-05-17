@@ -68,7 +68,9 @@ class DurationPredictor(torch.nn.Module):
         self.linear = torch.nn.Linear(n_chans, 1)
 
     def _forward(self, xs, x_masks: Optional [ torch.Tensor ]=None, is_inference:Boolean=False):
+
         xs = xs.transpose(1, 2)  # (B, idim, Tmax)
+
         for f in self.conv:
             xs = f(xs)  # (B, C, Tmax)
 
@@ -85,7 +87,7 @@ class DurationPredictor(torch.nn.Module):
             min=0)  # avoid negative value
 
         if x_masks is not None:
-            xs = xs.masked_fill(x_masks, 0.0)
+            xs = xs.masked_fill(x_masks, 0)
         
         return xs
 

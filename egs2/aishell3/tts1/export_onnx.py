@@ -45,8 +45,8 @@ if __name__ == "__main__":
     #logging.info("Preparing pretrained model from: %s", args.tts_tag)
     device = "cpu"#text2speech.device
     tts = Text2Speech.from_pretrained(
-        model_file="./exp/tts_train_gst+xvector_conformer_fastspeech2_bfcc_phn_none/train.loss.best.pth",
-        train_config="./exp/tts_train_gst+xvector_conformer_fastspeech2_bfcc_phn_none/config.yaml",
+        model_file="./exp/tts_train_wlsc_wlsc_phn_none/latest.pth",
+        train_config="./exp/tts_train_wlsc_wlsc_phn_none/config.yaml",
         vocoder_tag=None,
         device=device,
         num_speakers=9
@@ -61,6 +61,7 @@ if __name__ == "__main__":
         model.eval()
         #import numpy as np
         text = torch.tensor([140,130,69,131,115,144,99,18,99,14],dtype=torch.int).to(device)
+        phone_word_mappings = torch.tensor([0,0,0,1,1,1,2,2,2,2])
         # with open("/tmp/tmp.feats.txt") as infile:
         #     lines = infile.readlines()
         #     data =[]
@@ -73,17 +74,15 @@ if __name__ == "__main__":
         feats = torch.randn(150,20).to(device) # fake BFCCs
         sids = torch.tensor([4]).to(device) # speaker IDs
 
-        odict = model.inference(text, feats=feats, sids=sids)
+        # plain method invocation to confirm that everything works correctly outside torch.jit.script
+        odict = model.inference(text, feats=feats, sids=sids, phone_word_mappings=phone_word_mappings)
         odict["feat_gen"].detach().numpy().tofile("/tmp/torch_bfccs")
         
-        inputs = (text, feats, sids)
+        inputs = (text, feats, sids,phone_word_mappings)
 
-        # plain method invocation to confirm that everything works correctly outside torch.jit.script
         model.forward = model.export
-
-        #bfccs.detach().numpy().tofile("/tmp/torch_bfccs")
         
-        # now try converstion to TorchScript
+        # now try conversion to TorchScript
         scripted_module = torch.jit.script(model, inputs)
         
         # export
@@ -93,11 +92,11 @@ if __name__ == "__main__":
             inputs,
             'tts_model.onnx',
             export_params=True,
-            opset_version=14,
+            opset_version=13,
             do_constant_folding=False,
             verbose=True,
             input_names=[
-                'phones', 'style_reference', 'speaker_id'
+                'phones', 'style_reference', 'speaker_id', 'phone_word_mappings'
             ],
             output_names=['pcm','durations'],
             dynamic_axes={
@@ -106,6 +105,9 @@ if __name__ == "__main__":
                 },
                 'style_reference': {
                     0: 'length'
+                },
+                'phone_word_mappings':{
+                    0: 'num_phones'
                 },
                 'pcm': {
                     0: 'olen', 

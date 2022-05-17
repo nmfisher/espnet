@@ -239,7 +239,7 @@ class Encoder(torch.nn.Module):
                 conditioning_layer_dim, attention_dim
             )
 
-    def forward(self, xs: torch.Tensor, masks:Optional[torch.Tensor]):
+    def forward(self, xs: torch.Tensor, masks:torch.Tensor):
         """Encode input sequence.
 
         Args:
@@ -254,9 +254,8 @@ class Encoder(torch.nn.Module):
         # if isinstance(self.embed, (Conv2dSubsampling, VGG2L)):
         #     xs, masks = self.embed(xs, masks)
         # else:
+
         xs = self.embed(xs)
-        if masks is None:
-            raise Exception("MASKS")
         
         if self.intermediate_layers is None:
             for enc in self.encoders:

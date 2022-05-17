@@ -59,8 +59,8 @@ class RangePredictor(torch.nn.Module):
         # NOTE: calculate in log domain
         xs = self.linear(xs.transpose(1, 2)).squeeze(-1)  # (B, Tmax)
 
-        if x_masks is not None:
-            xs = xs.masked_fill(x_masks, 0.0)
+        # if x_masks is not None:
+        #     xs = xs.masked_fill(x_masks, float(0.0)).float()
         
         return xs
 
