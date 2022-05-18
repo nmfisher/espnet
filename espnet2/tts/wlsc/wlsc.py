@@ -213,7 +213,7 @@ class WLSC(AbsTTS):
         # )
         self.dec = ConformerEncoder(
             idim=0,
-            attention_dim=1536,
+            attention_dim=1024,
             attention_heads=4,
             input_layer=None,
             num_blocks=6,
@@ -232,11 +232,11 @@ class WLSC(AbsTTS):
 
         self.prior = PriorEncoder(idim=768, gru_units=self.style_token_dim,gru_layers=2)
 
-        self.feat_out = torch.nn.Linear(1536, odim)
+        self.feat_out = torch.nn.Linear(1024, odim)
 
         # define duration predictor
         self.duration_predictor = DurationPredictor(
-            idim=1536, # concatenated size
+            idim=1024, # concatenated size
             n_layers=2,
             n_chans=256,
             kernel_size=3,
@@ -244,7 +244,7 @@ class WLSC(AbsTTS):
         )
 
         self.range_predictor = RangePredictor(
-            idim=1536, # concatenated size
+            idim=1024, # concatenated size
             n_layers=2,
             n_chans=256,
             kernel_size=3,
@@ -349,20 +349,25 @@ class WLSC(AbsTTS):
         phone_word_mappings = phone_word_mappings.unsqueeze(2)
         # word embeddings
         word_embeddings_indices = phone_word_mappings.expand(phone_word_mappings.size(0), phone_word_mappings.size(1), self.word_seq_embedding_dim)
-        # to preserve shape inferencing (which is needed due to transpose calls later down the line) in ONNX export, we need to manually create a tensor of the correct shape and pass to the out argument of gather
-        word_embeddings_spread = torch.zeros(phone_embeddings.size(0),phone_embeddings.size(1),self.word_seq_embedding_dim)
-        torch.gather(word_embeddings, 1, word_embeddings_indices, out=word_embeddings_spread)
+        
+        if self.training:
+            word_embeddings_spread = torch.gather(word_embeddings, 1, word_embeddings_indices)    
+        else:
+            # to preserve shape inferencing (which is needed due to transpose calls later down the line) in ONNX export, we need to manually create a tensor of the correct shape and pass to the out argument of gather
+            word_embeddings_spread = torch.zeros(phone_embeddings.size(0),phone_embeddings.size(1),self.word_seq_embedding_dim).to(word_embeddings.device)
+            torch.gather(word_embeddings, 1, word_embeddings_indices, out=word_embeddings_spread)
         
         # repeat for the word style embeddings
         word_style_embeddings_indices = phone_word_mappings.expand(phone_word_mappings.size(0), phone_word_mappings.size(1), self.style_token_dim)
-        word_style_embeddings_spread = torch.zeros(phone_embeddings.size(0),phone_embeddings.size(1),self.style_token_dim)
-        torch.gather(word_style_embeddings, 1, word_style_embeddings_indices, out=word_style_embeddings_spread)    
+        if self.training:
+            word_style_embeddings_spread = torch.gather(word_style_embeddings, 1, word_style_embeddings_indices)    
+        else:
+            word_style_embeddings_spread = torch.zeros(phone_embeddings.size(0),phone_embeddings.size(1),self.style_token_dim).to(word_embeddings.device)
+            torch.gather(word_style_embeddings, 1, word_style_embeddings_indices, out=word_style_embeddings_spread)    
 
         concat = torch.cat([
             word_embeddings_spread, 
-            word_embeddings_spread, 
             phone_embeddings,
-            word_style_embeddings_spread,
             word_style_embeddings_spread,
             speaker_embeddings.expand(-1,phone_embeddings.size(1), -1)
             ], 
