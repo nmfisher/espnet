@@ -20,7 +20,7 @@ def get_parser():
         "pitch", type=str, help="Path to extracted pitch features in SCP format (e.g. 'pitch.scp')"
     )
     parser.add_argument(
-        "durations", type=str, help="Path to durations SCP (e.g. 'durations')"
+        "durations", type=str, help="Path to durations (e.g. 'durations') (tab-separated, leftmost column is utterance ID, right column is space-separated list of ints where each int is the duration of the phone at that index"
     )
     parser.add_argument(
         "text", type=str, help="Path to text SCP (e.g. 'text')"
@@ -29,7 +29,7 @@ def get_parser():
         "feats_out", type=str, help="wspecifier for outputs (e.g. 'ark,scp:feats.ark,feats.scp')"
     )
     parser.add_argument(
-        "phone_word_mappings_out", type=str, help="wspecifier for writing the word index of every phone (e.g. 'ark,scp:phone_word_indices.ark,phone_word_indices.scp')"
+        "phone_word_mappings", type=str, help="Path to file containing phone->word mappings (e.g. 'phone_word_indices') (tab-separated, leftmost column is utterance ID, right column is space-separated list of ints where each int is the index of the word that the phone at that index belongs to"
     )
     parser.add_argument(
         "word_phone_mappings_out", type=str, help="wspecifier for writing the one-hot matrix of phone indices for each word  (e.g. 'ark,scp:word_phone_mappings.ark,word_phone_mappings.scp')"
@@ -43,7 +43,7 @@ def _open(path):
         i = 0
         for line in infile.readlines():
             i += 1
-            split = line.strip().split(" ")
+            split = line.strip().split()
             yield (split[0], split[1:])
 
 def main():
@@ -60,27 +60,27 @@ def main():
 
     durations = _open(args.durations)
     transcripts = _open(args.text)
-    # all_feats = _open(args.feats)
     
     with ReadHelper("scp:" + args.feats) as feats_reader:
             with WriteHelper(args.feats_out) as writer:
-                with WriteHelper(args.phone_word_mappings_out) as phone_word_mapping_writer:
-                    print(f"Using {args.word_phone_mappings_out}")
-                    with WriteHelper(args.word_phone_mappings_out,compression_method=2) as word_phone_mapping_writer:
-                        for ((utt_id, durations), (_,phones,), (_, feats), (_,pitch_file)) in zip(durations, transcripts, feats_reader, _open(args.pitch)):
+                print(f"Using {args.word_phone_mappings_out}")
+                with WriteHelper(args.word_phone_mappings_out,compression_method=2) as word_phone_mapping_writer:
+                        for ((utt_id, durations), \
+                            (_,phones,), \
+                            (_, feats), \
+                            (_,pitch_file), \
+                            (_, phone_word_mappings)) in \
+                                zip(durations, \
+                                    transcripts, \
+                                    feats_reader, \
+                                    _open(args.pitch), \
+                                    _open(args.phone_word_mappings)):
                             
+                            phone_word_mappings = np.array([int(x) for x in phone_word_mappings])
                             # this is a list of W elements (where W is the number of words) where each element is the index in [phones] that marks the end of a word
                             # accordingly, [phones] is a phonetic transcription of N words
                             P = len(phones)
-                            
-                            # pitch = np.fromfile(pitch_file[0])
-                            phone_indices = np.arange(P)
-                            word_boundaries = phone_indices[[x for x in range(len(phones)) if phones[x].endswith("E") or phones[x] in ["SPN","SIL"]]]
-                            W = len(word_boundaries)
-
-                            # use this to create a list of P elements (where P is the length of [phones]), 
-                            # where each element is the word index that the phone at that index belongs to
-                            phone_word_mappings = []
+                            W = phone_word_mappings.max() + 1
 
                             # also use this to create a one-hot encoded list of WxP elements, i.e. where each row is a word, and each column is a phone 
                             word_phone_mappings = np.zeros((W, P),dtype=np.int32)
@@ -90,34 +90,33 @@ def main():
                             
                             word_idx = 0
                             durations = [int(x) for x in durations]
-                            #print(f"Duratons : {durations}")
-                            #print(f"feats {feats.shape}")
-                            #print(f"word_boundaries {word_boundaries}")
-                            for i in range(len(word_boundaries)):
-                                word_end_idx = word_boundaries[i]
-                                word_start_idx = word_boundaries[i-1]+1 if i > 0 else 0
-                                num_phones = 1 + word_end_idx - word_start_idx
-                                num_frames = sum(durations[word_start_idx:word_end_idx+1])
-                                frame_offset = sum(durations[:word_start_idx]) if i > 0 else 0
-                                # print(f"num_frames {num_frames} frame_offset {frame_offset}")    
-                                word_feats = np.array(feats[frame_offset:frame_offset+num_frames])
 
-                                stacked = word_feats #np.hstack([word_feats,word_pitch])
-                                                                
-                                feats_avg += [ stacked.mean(0) ]
-                                if np.any(np.isnan(feats_avg)):
-                                    raise Exception()
+                            phone_idx = 0
 
-                                phone_word_mappings += [word_idx] * num_phones
-                                word_phone_mappings[word_idx,word_start_idx:word_end_idx+1] = 1
-                                
-                                word_idx += 1
+                            # if there's only one word, average across all feat frames
+                            if W == 1:
+                                feats_avg = [feats.mean(0)]
+                            else:
+                                for word_idx in range(W):
+                                    avg = np.zeros((1, feats.shape[1]))
+                                    num_phones = 0
+                                    while phone_idx < len(durations) and phone_word_mappings[phone_idx] == word_idx:
+                                        frame_offset = sum(durations[:phone_idx])
+                                        phone_duration = durations[phone_idx]
+                                        avg += np.array(feats[frame_offset:frame_offset+phone_duration]).mean(0)
+                                        num_phones += 1
+                                        word_phone_mappings[word_idx,phone_idx] = 1
+                                        phone_idx += 1
+                                    avg /= num_phones
+                                    feats_avg += [avg]
+                                    word_idx += 1
                                 
                             if len(phone_word_mappings) != len(phones):
-                                raise Exception(f"Word mapping mismatch for {utt_id} phones length {len(phones)} {phones}, durations {durations} word boundaries were {word_boundaries}, mappings {len(phone_word_mappings)} were {phone_word_mappings}")
+                                raise Exception(f"Word mapping mismatch for {utt_id} phones length {len(phones)} {phones}, durations {durations} mappings {len(phone_word_mappings)} were {phone_word_mappings}")
+                            if len(feats_avg) == 0:
+                                raise Exception(f"Empty features for {utt_id}")
                             
                             writer(utt_id, np.vstack(feats_avg))
-                            phone_word_mapping_writer(utt_id, np.array(phone_word_mappings,dtype=np.int32))
                             word_phone_mapping_writer(utt_id, word_phone_mappings)
 
 

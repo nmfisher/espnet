@@ -504,6 +504,8 @@ if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
 fi
 
 if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ]; then
+    cp data/${train_set}/phone_word_mappings ${data_feats}/${train_set}
+    cp data/${valid_set}/phone_word_mappings ${data_feats}/${valid_set}
     ./scripts/feats/average_feats.sh --nj "${_nj}" ${data_feats}/${train_set}
     ./scripts/feats/average_feats.sh --nj "${_nj}" ${data_feats}/${valid_set}
 fi
@@ -594,8 +596,8 @@ if ! "${skip_train}"; then
                 --valid_data_path_and_name_and_type "${_valid_dir}/${_scp},speech,${_type}" \
                 --train_data_path_and_name_and_type "${_train_dir}/durations,durations,text_int " \
                 --valid_data_path_and_name_and_type "${_valid_dir}/durations,durations,text_int " \
-                --train_data_path_and_name_and_type "${_train_dir}/phone_word_mappings.scp,phone_word_mappings,kaldi_ark  " \
-                --valid_data_path_and_name_and_type "${_valid_dir}/phone_word_mappings.scp,phone_word_mappings,kaldi_ark  " \
+                --train_data_path_and_name_and_type "${_train_dir}/phone_word_mappings,phone_word_mappings,text_int   " \
+                --valid_data_path_and_name_and_type "${_valid_dir}/phone_word_mappings,phone_word_mappings,text_int   " \
                 --train_shape_file "${_logdir}/train.JOB.scp" \
                 --valid_shape_file "${_logdir}/valid.JOB.scp" \
                 --output_dir "${_logdir}/stats.JOB" \
@@ -662,8 +664,8 @@ if ! "${skip_train}"; then
         _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/energy,energy,npy "
         _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " \
         _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " \
-        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/phone_word_mappings.scp,phone_word_mappings,kaldi_ark  " \
-        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/phone_word_mappings.scp,phone_word_mappings,kaldi_ark  " \
+        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/phone_word_mappings,phone_word_mappings,text_int   " \
+        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/phone_word_mappings,phone_word_mappings,text_int   " \
         _opts+="--odim ${odim} "
         # _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/word_phone_mappings.scp,word_phone_mappings,kaldi_ark  " \
         # _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/word_phone_mappings.scp,word_phone_mappings,kaldi_ark  " \
@@ -801,7 +803,7 @@ if ! "${skip_eval}"; then
                 _opts+="--data_path_and_name_and_type ${_data}/energy,energy,npy "
             fi
             
-            _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/phone_word_mappings.scp,phone_word_mappings,kaldi_ark  " \
+            _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/phone_word_mappings,phone_word_mappings,text_int   " \
 
             # Add X-vector to the inputs if needed
             if "${use_xvector}"; then
