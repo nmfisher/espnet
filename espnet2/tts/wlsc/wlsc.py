@@ -108,19 +108,7 @@ class WordStyleEncoder(torch.nn.Module):
         # each element in outs represents an encoding of the acoustic features for a word (being the averaged acoustic features for each phone)
         outs, _ = self.gru(feats_averaged)
         st = self.style_tokens.expand(outs.size(0), -1, -1)
-
-        # encoded = []
-        # # MHA doesn't accept 3D inputs?
-        # # for i in range(outs.size(1)):
-        # word = outs[:,i].unsqueeze(1) # this is the i'th word for all sequences in the batch       
-        # print(st.size())
-        # print(word.size())
-        # attn_out, attn_w = self.attn(word,st,st,None)
-        # raise Exception(attn_out.size())
-        # encoded += [attn_out.unsqueeze(0)]   
-
         attn_out = self.attn(outs, st, st, None)
-        # raise Exception(attn_out.size())
         return attn_out
 
 class WLSC(AbsTTS):
@@ -132,7 +120,41 @@ class WLSC(AbsTTS):
         odim: int,
         num_speakers: Optional[int],
         spks:Optional[int],
-        spk_embed_dim:Optional[int]
+        spk_embed_dim:Optional[int]=256,
+        spk_classifier_size:Optional[int]=256,
+        phone_embed_dim:Optional[int]=256,
+        word_seq_embed_dim:Optional[int]=256,
+        word_seq_proj_dim:Optional[int]=256,
+        style_token_dim:Optional[int]=256,
+        word_seq_encoder_dropout:Optional[float]=0.0,
+        encoder_adim:Optional[int]=256,
+        encoder_aheads:Optional[int]=2,
+        encoder_numblocks:Optional[int]=5,
+        encoder_dropout_rate:Optional[float]=0.0,
+        encoder_positional_dropout_rate:Optional[float]=0.0,
+        encoder_attention_dropout_rate:Optional[float]=0.0,
+        encoder_conv_kernel_size:Optional[int]=3, 
+        style_encoder_aheads:Optional[int]=2,
+        decoder_adim:Optional[int]=1024,
+        decoder_aheads:Optional[int]=2,
+        decoder_numblocks:Optional[int]=5,
+        decoder_dropout_rate:Optional[float]=0.0,
+        decoder_positional_dropout_rate:Optional[float]=0.0,
+        decoder_attention_dropout_rate:Optional[float]=0.0,
+        decoder_conv_kernel_size:Optional[int]=3, 
+        prior_layers:Optional[int]=2,
+        duration_predictor_layers:Optional[int]=2,
+        duration_predictor_chans:Optional[int]=256,
+        duration_predictor_kernel_size:Optional[int]=3,
+        duration_predictor_dropout=0.0,
+        range_predictor_layers:Optional[int]=2,
+        range_predictor_chans:Optional[int]=256,
+        range_predictor_kernel_size:Optional[int]=3,
+        range_predictor_dropout=0.0,
+        postnet_layers:Optional[int]=5,
+        postnet_chans:Optional[int]=512,
+        postnet_filts:Optional[int]=5,
+        postnet_dropout:Optional[float]=0.0
     ):
         """Initialize WLSC module.
         """
@@ -144,53 +166,47 @@ class WLSC(AbsTTS):
         self.odim = odim
         self.eos = idim - 1
 
-        # unused but need to preserve this property for compliance with ESPNet API
         self.spks = spks
-        self.spk_embed_dim = None
+        self.spk_embed_dim = spk_embed_dim
+        
+        # unused but need to preserve this property for compliance with ESPNet API
         self.langs = None
 
         self.spk_embed = torch.nn.Embedding(
-            num_embeddings=self.spks+1, embedding_dim=256, padding_idx=self.spks
+            num_embeddings=self.spks+1, embedding_dim=self.spk_embed_dim, padding_idx=self.spks
         )
 
-        self.speaker_classifier = SpeakerClassifier(256, self.spks, 256)
+        self.speaker_classifier = SpeakerClassifier(self.spk_embed_dim, self.spks, spk_classifier_size)
                 
         # set padding idx
         self.padding_idx = 0
 
-        self.embed_dim = 256
+        self.phone_embed_dim = phone_embed_dim
 
-        # define network modules
-        # self.enc = Encoder(
-        #     idim=idim,
-        #     embed_dim=self.embed_dim,
-        #     dropout_rate=0.5,
-        #     padding_idx=self.padding_idx,
-        # )
         encoder_input_layer = torch.nn.Embedding(
-            num_embeddings=idim, embedding_dim=256, padding_idx=self.padding_idx
+            num_embeddings=idim, embedding_dim=self.phone_embed_dim, padding_idx=self.padding_idx
         )
 
-        self.word_seq_embedding_dim = 256
+        self.word_seq_embedding_dim = word_seq_embed_dim 
 
         self.word_seq_enc = torch.nn.GRU(
             bidirectional=True,
-            input_size=256,
+            input_size=self.phone_embed_dim,
             hidden_size=self.word_seq_embedding_dim,
             batch_first=True,
-            dropout=0.0)
+            dropout=word_seq_encoder_dropout)
 
         self.enc = ConformerEncoder(
             idim=idim,
-            attention_dim=256,
-            attention_heads=2,
-            num_blocks=5,
-            dropout_rate=0.0,
-            positional_dropout_rate=0.0,
-            attention_dropout_rate=0.0,
+            attention_dim=encoder_adim,
+            attention_heads=encoder_aheads,
+            num_blocks=encoder_numblocks,
+            dropout_rate=encoder_dropout_rate,
+            positional_dropout_rate=encoder_positional_dropout_rate,
+            attention_dropout_rate=encoder_attention_dropout_rate,
             input_layer=encoder_input_layer,
             positionwise_layer_type="conv1d",
-            positionwise_conv_kernel_size=3, 
+            positionwise_conv_kernel_size=encoder_conv_kernel_size, 
             pos_enc_layer_type="rel_pos",   
             selfattention_layer_type="rel_selfattn", 
             activation_type="swish",             
@@ -198,27 +214,22 @@ class WLSC(AbsTTS):
             use_cnn_module=False,
             cnn_module_kernel=7
         )
-        self.word_seq_proj_dim = 256
-        self.word_seq_proj = torch.nn.Linear(256, self.word_seq_proj_dim)
-        self.style_token_dim = 256
-        self.word_style_encoder = WordStyleEncoder(self.odim,self.style_token_dim, 2)
+        self.word_seq_proj_dim = word_seq_proj_dim
+        self.word_seq_proj = torch.nn.Linear(self.word_seq_embedding_dim, self.word_seq_proj_dim)
+        self.style_token_dim = style_token_dim
+        self.word_style_encoder = WordStyleEncoder(self.odim,self.style_token_dim, style_encoder_aheads)
 
-        # self.dec = Decoder(
-        #     384,
-        #     odim,
-        #     AttLoc(384, 256, odim, 32, 15)
-        # )
         self.dec = ConformerEncoder(
             idim=0,
-            attention_dim=1024,
-            attention_heads=2,
+            attention_dim=decoder_adim,
+            attention_heads=decoder_aheads,
             input_layer=None,
-            num_blocks=5,
-            dropout_rate=0.0,
-            positional_dropout_rate=0.0,
-            attention_dropout_rate=0.0,
+            num_blocks=decoder_numblocks,
+            dropout_rate=decoder_dropout_rate,
+            positional_dropout_rate=decoder_positional_dropout_rate,
+            attention_dropout_rate=decoder_attention_dropout_rate,
             positionwise_layer_type="conv1d",
-            positionwise_conv_kernel_size=3, 
+            positionwise_conv_kernel_size=decoder_conv_kernel_size, 
             pos_enc_layer_type="rel_pos",   
             selfattention_layer_type="rel_selfattn", 
             activation_type="swish",             
@@ -227,25 +238,25 @@ class WLSC(AbsTTS):
             cnn_module_kernel=31,
         )
 
-        self.prior = PriorEncoder(idim=768, gru_units=self.style_token_dim,gru_layers=2)
+        self.prior = PriorEncoder(idim=self.phone_embed_dim + self.word_seq_embedding_dim * 2, gru_units=self.style_token_dim,gru_layers=prior_layers)
 
-        self.feat_out = torch.nn.Linear(1024, odim)
+        self.feat_out = torch.nn.Linear(decoder_adim, odim)
 
         # define duration predictor
         self.duration_predictor = DurationPredictor(
-            idim=1024, # concatenated size
-            n_layers=2,
-            n_chans=256,
-            kernel_size=3,
-            dropout_rate=0.0,
+            idim=decoder_adim, # concatenated size
+            n_layers=duration_predictor_layers,
+            n_chans=duration_predictor_chans,
+            kernel_size=duration_predictor_kernel_size,
+            dropout_rate=duration_predictor_dropout,
         )
 
         self.range_predictor = RangePredictor(
-            idim=1024, # concatenated size
-            n_layers=2,
-            n_chans=256,
-            kernel_size=3,
-            dropout_rate=0.0,
+            idim=decoder_adim, # concatenated size
+            n_layers=range_predictor_layers,
+            n_chans=range_predictor_chans,
+            kernel_size=range_predictor_kernel_size,
+            dropout_rate=range_predictor_dropout,
         )
 
         # define length regulator
@@ -254,11 +265,11 @@ class WLSC(AbsTTS):
         self.postnet = Postnet(
                 idim=20,
                 odim=odim,
-                n_layers=5,
-                n_chans=512,
-                n_filts=5,
+                n_layers=postnet_layers,
+                n_chans=postnet_chans,
+                n_filts=postnet_filts,
                 use_batch_norm=True,
-                dropout_rate=0.0,
+                dropout_rate=postnet_dropout,
         )
         
         self.criterion = WLSCLoss(
@@ -437,11 +448,12 @@ class WLSC(AbsTTS):
         # linear project
         phone_enc_proj = self.word_seq_proj(phone_enc)
 
+        
         # average by word boundaries
         phone_enc_averaged = self.average(phone_enc_proj, phone_word_mappings, d_masks)
 
         word_enc_out, _ = self.word_seq_enc(phone_enc_averaged.detach())
-
+        
         prior_out = self.prior(phone_enc_averaged.detach(), word_enc_out.detach())  
 
         # don't bother with masking here because we can take care of this in the loss calculation
