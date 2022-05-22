@@ -19,10 +19,7 @@ import time
 from espnet.nets.pytorch_backend.hqss.speaker_classifier import SpeakerClassifier
 
 from typeguard import check_argument_types
-#from espnet.nets.pytorch_backend.hqss.loc_attn import AttLoc
-# from espnet.nets.pytorch_backend.rnn.attentions2 import AttLoc
-# from espnet.nets.pytorch_backend.tacotron2.encoder import Encoder
-# from espnet.nets.pytorch_backend.tacotron2.decoder import Decoder
+
 from espnet.nets.pytorch_backend.conformer.encoder import (
     Encoder as ConformerEncoder,  # noqa: H301
 )
@@ -186,8 +183,8 @@ class WLSC(AbsTTS):
         self.enc = ConformerEncoder(
             idim=idim,
             attention_dim=256,
-            attention_heads=4,
-            num_blocks=6,
+            attention_heads=2,
+            num_blocks=5,
             dropout_rate=0.0,
             positional_dropout_rate=0.0,
             attention_dropout_rate=0.0,
@@ -209,14 +206,14 @@ class WLSC(AbsTTS):
         # self.dec = Decoder(
         #     384,
         #     odim,
-        #     AttLoc(384, 1024, odim, 32, 15)
+        #     AttLoc(384, 256, odim, 32, 15)
         # )
         self.dec = ConformerEncoder(
             idim=0,
             attention_dim=1024,
-            attention_heads=4,
+            attention_heads=2,
             input_layer=None,
-            num_blocks=6,
+            num_blocks=5,
             dropout_rate=0.0,
             positional_dropout_rate=0.0,
             attention_dropout_rate=0.0,
@@ -268,9 +265,9 @@ class WLSC(AbsTTS):
             use_masking=True, use_weighted_masking=False
         )
 
-
-        pytorch_total_params = sum(p.numel() for p in self.parameters())
-        print(f"total params : {pytorch_total_params}")
+        for c in [ self.spk_embed, self.duration_predictor, self.range_predictor, self.prior, self.feat_out, self.enc, self.dec, self.word_style_encoder, self.word_seq_enc, self.word_seq_proj ]:
+            pytorch_total_params = sum(p.numel() for p in c.parameters())
+            print(f"params for {type(c).__name__} : {pytorch_total_params}")
 
     # embeddings are phonetic token embeddings, BxLpxE
     # phone_word_mappings are the indices of the word that each respetive phonetic token is derived from, BxLp
@@ -366,13 +363,13 @@ class WLSC(AbsTTS):
             torch.gather(word_style_embeddings, 1, word_style_embeddings_indices, out=word_style_embeddings_spread)    
 
         concat = torch.cat([
-            word_embeddings_spread, 
-            phone_embeddings,
-            word_style_embeddings_spread,
-            speaker_embeddings.expand(-1,phone_embeddings.size(1), -1)
-            ], 
-        2)
+             word_embeddings_spread, 
+             phone_embeddings,
+             word_style_embeddings_spread,
+             speaker_embeddings.expand(-1,phone_embeddings.size(1), -1)
+             ], 2)
         return concat
+#        return word_embeddings_spread + phone_embeddings + word_style_embeddings_spread + speaker_embeddings.expand(-1,phone_embeddings.size(1), -1)
 
     def forward(
         self,
@@ -527,11 +524,11 @@ class WLSC(AbsTTS):
     def export(
         self,
         text: torch.Tensor,
-        feats:torch.Tensor,
         sids:torch.Tensor,
-        phone_word_mappings:torch.Tensor
+        phone_word_mappings:torch.Tensor,
+        feats_word_avg: torch.Tensor 
     ) -> Tuple[torch.Tensor,torch.Tensor,torch.Tensor]:
-        return self._inference(text, feats=feats,sids=sids,phone_word_mappings=phone_word_mappings)     
+        return self._inference(text, sids=sids,phone_word_mappings=phone_word_mappings,feats_word_avg=feats_word_avg)     
 
     def inference(
         self,
@@ -540,6 +537,8 @@ class WLSC(AbsTTS):
         pitch:Optional[torch.Tensor] = None,
         phone_word_mappings: torch.Tensor = None,
         sids:torch.Tensor = None,
+        feats_word_avg: torch.Tensor = None, 
+        feats_word_avg_lengths: torch.Tensor = None,
         durations_lengths:Optional[torch.Tensor] = None,
         feats_lengths:Optional[torch.Tensor] = None,
         pitch_lengths:Optional[torch.Tensor] = None,
@@ -559,10 +558,10 @@ class WLSC(AbsTTS):
             pitch=pitch, 
             phone_word_mappings=phone_word_mappings, 
             sids=sids, 
+            feats_word_avg=feats_word_avg,
             durations_lengths=durations_lengths, 
             feats_lengths=feats_lengths, 
             pitch_lengths=pitch_lengths,
-            feats=feats,
             energy=energy,
             threshold=threshold, 
             minlenratio=minlenratio, 
@@ -571,21 +570,21 @@ class WLSC(AbsTTS):
             backward_window=backward_window, 
             forward_window=forward_window, 
             use_teacher_forcing=use_teacher_forcing)
-        
         return dict(feat_gen=feats, durations=durations)
     
     def _inference(
         self,
         text: torch.LongTensor,
-        feats: torch.Tensor,
         sids:torch.Tensor,
         phone_word_mappings: torch.Tensor,
+        feats_word_avg: torch.Tensor, 
+        feats_word_avg_lengths: Optional[torch.Tensor] = None,
         durations:Optional[torch.Tensor] = None,
         pitch:Optional[torch.Tensor] = None,
         durations_lengths:Optional[torch.Tensor] = None,
         feats_lengths:Optional[torch.Tensor] = None,
         pitch_lengths:Optional[torch.Tensor] = None,
-        energy: Optional[torch.Tensor] = None,
+        energy: Optional[torch.Tensor] = None,        
         threshold: float = 0.5,
         minlenratio: float = 0.0,
         maxlenratio: float = 10.0,
@@ -626,6 +625,8 @@ class WLSC(AbsTTS):
         
         phone_word_mappings = phone_word_mappings.unsqueeze(0)       
 
+        # feats_word_avg = feats_word_avg.unsqueeze(0)
+
         d_masks = make_pad_mask(ilens).to(text.device)
         
         # encode phone sequence
@@ -643,12 +644,22 @@ class WLSC(AbsTTS):
 
         prior_out = self.prior(phone_enc_averaged, word_enc_out)  
 
-        # prior_out += (0.1 * self.word_style_encoder.style_tokens[:,3,:].unsqueeze(1).expand(prior_out.size()))
+        # word_style_enc = self.word_style_encoder(feats_word_avg)
 
-        concatenated = self.concatenate(word_enc_out, phone_enc_proj, phone_word_mappings, prior_out, spembs)
+        #for i in range(15):
+        # style_token = int(os.environ["STYLE_TOKEN"])
+        # style_weighting = float(os.environ["STYLE_WEIGHTING"])
+        # prior_out += (style_weighting * self.word_style_encoder.style_tokens[:,style_token,:].unsqueeze(1).expand(prior_out.size()))
+        prior_out = self.word_style_encoder.style_tokens[:,2,:].unsqueeze(1).expand(prior_out.size())
 
+        concatenated = self.concatenate(word_enc_out, phone_enc_proj, phone_word_mappings, \
+        prior_out, 
+        #word_style_enc,
+        spembs)
+        concatenated = concatenated.view(phone_enc_proj.size(0), phone_enc_proj.size(1), 1024)
         # forward duration predictor and variance predictors        
         d_outs = self.duration_predictor.inference(concatenated, d_masks).int()
+        
         r_outs = self.range_predictor.inference(concatenated, d_masks)
 
         # apply Gaussian upsampling
@@ -657,8 +668,6 @@ class WLSC(AbsTTS):
         h_masks = torch.ones(1, upsampled.size(1), dtype=torch.bool).to(concatenated.device)
         
         zs, _ = self.dec(upsampled,h_masks)  # (B, T_feats, adim)
-
-        #return zs.reshape(upsampled.size()), zs.reshape(upsampled.size())
                 
         before_outs = self.feat_out(zs).view(
             zs.size(0), -1, self.odim
@@ -668,7 +677,7 @@ class WLSC(AbsTTS):
             before_outs.transpose(1, 2)
         ).transpose(1, 2)
         
-        return after_outs, d_outs, phone_word_mappings
+        return before_outs, d_outs, phone_word_mappings
         
     @torch.jit.ignore
     def _plot_and_save_attention(self, att_w, filename, xtokens=None, ytokens=None):
