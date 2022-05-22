@@ -35,34 +35,19 @@ def get_parser():
         help="hop_length used during feat extraction (this is needed as we perform a STFT to extract pitch/energy. This should match either the hop length used during phone alignment or BFCC extraction"
     )
     parser.add_argument(
-        "train_wav", type=str, help="Path to train WAV file. e.g. data/train/wav.scp"
+        "wav", type=str, help="Path to train WAV file. e.g. data/train/wav.scp"
     )
     parser.add_argument(
-        "train_durations", type=str, help="Path to train durations file. e.g. data/train/durations"
+        "durations", type=str, help="Path to train durations file. e.g. data/train/durations"
     )
     parser.add_argument(
-        "train_transcripts", type=str, help="Path to train transcripts. e.g. data/train/text"
+        "transcripts", type=str, help="Path to train transcripts. e.g. data/train/text"
     )
     parser.add_argument(
-        "train_pitch_out", type=str, help="Output path for train pitch data/train/pitch"
+        "pitch_out", type=str, help="Output path for train pitch data/train/pitch"
     )
     parser.add_argument(
-        "train_energy_out", type=str, help="Output path for train energy e.g. data/train/energy"
-    )
-    parser.add_argument(
-        "valid_wav", type=str, help="Path to valid WAV file. e.g. data/valid/wav.scp"
-    )
-    parser.add_argument(
-        "valid_durations", type=str, help="Path to validation durations file. e.g. data/valid/durations"
-    )
-    parser.add_argument(
-        "valid_transcripts", type=str, help="Path to valid transcripts. e.g. data/valid/text"
-    )
-    parser.add_argument(
-        "valid_pitch_out", type=str, help="Output path for validation pitch data/valid/pitch"
-    )
-    parser.add_argument(
-        "valid_energy_out", type=str, help="Output path for validation pitch data/valid/pitch"
+        "energy_out", type=str, help="Output path for train energy e.g. data/train/energy"
     )
     parser.add_argument(
         "f0min",
@@ -77,10 +62,7 @@ def get_parser():
         help="Max frequency",
     )
     parser.add_argument(
-        "train_dump_dir", type=str, help="Directory where train pitch (as numpy arrays) will be written (one file per sample)"
-    )
-    parser.add_argument(
-        "valid_dump_dir", type=str, help="Directory where validation pitch (as numpy arrays) will be written (one file per sample)"
+        "dump_dir", type=str, help="Directory where train pitch (as numpy arrays) will be written (one file per sample)"
     )
     return parser
 
@@ -178,39 +160,19 @@ def main():
 
     # for each audio file in the training dataset
     # load & extract F0 for each phone (using provided durations)
-    train_vals = list(extract(_open(args.train_wav), _open(
-        args.train_durations), _open(args.train_transcripts), args.sample_rate, args.hop_length))
-
-    valid_vals = extract(_open(args.valid_wav), _open(
-        args.valid_durations), _open(args.valid_transcripts), args.sample_rate, args.hop_length)
-
-    # normalize train/valid pitches based on mean/stddev from train only
-    # todo - multi-speaker basis
-    f0=np.array(list(itertools.chain.from_iterable([f for utt_id,f,e in train_vals])))
+    vals = list(extract(_open(args.wav), _open(
+        args.durations), _open(args.transcripts), args.sample_rate, args.hop_length))
     
-    mean_f0 = f0.mean(axis = 0)
-    stddev_f0 =f0.std(axis = 0)
-
-    energy =np.array(list(itertools.chain.from_iterable([e for utt_id,f,e in train_vals])))
-    mean_e = energy.mean(axis = 0)
-    stddev_e = energy.std(axis=0)
-
-    # normalize training/validation set based on training means/stddevs
-    train_vals = [ (utt_id, (f0 - mean_f0) / stddev_f0, (energy - mean_e) / stddev_e)  for (utt_id, f0, energy) in train_vals]
-    valid_vals = [ (utt_id, (f0 - mean_f0) / stddev_f0, (energy - mean_e) / stddev_e) for (utt_id, f0, energy) in valid_vals]
-    
-    for vals, pitch_out, energy_out, dump_dir in [(train_vals, args.train_pitch_out, args.train_energy_out, args.train_dump_dir), (valid_vals, args.valid_pitch_out,args.valid_energy_out, args.valid_dump_dir)]:
-        # dump the actual F0 values to a .npy file
-        # write a line in Kaldi scp format pointing to this file
-        with open(pitch_out, "w") as pitch_scp,open(energy_out, "w") as energy_scp:
-            for utt_id, f0, energy in vals:
-                pitch_path = dump_dir + f"/{utt_id}_pitch.npy"
-                energy_path = dump_dir + f"/{utt_id}_energy.npy"
-                np.save(pitch_path,np.expand_dims(f0,1),allow_pickle=False)
-                print(energy)
-                np.save(energy_path,energy,allow_pickle=False)
-                pitch_scp.write("{} {}\n".format(utt_id, pitch_path))
-                energy_scp.write("{} {}\n".format(utt_id, energy_path))
+    # dump the actual F0 values to a .npy file
+    # write a line in Kaldi scp format pointing to this file
+    with open(args.pitch_out, "w") as pitch_scp,open(args.energy_out, "w") as energy_scp:
+        for utt_id, f0, energy in vals:
+            pitch_path = args.dump_dir + f"/{utt_id}_pitch.npy"
+            energy_path = args.dump_dir + f"/{utt_id}_energy.npy"
+            np.save(pitch_path,np.expand_dims(f0,1),allow_pickle=False)
+            np.save(energy_path,energy,allow_pickle=False)
+            pitch_scp.write("{} {}\n".format(utt_id, pitch_path))
+            energy_scp.write("{} {}\n".format(utt_id, energy_path))
 
 if __name__ == "__main__":
     main()

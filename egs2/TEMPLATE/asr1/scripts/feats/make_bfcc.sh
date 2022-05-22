@@ -83,8 +83,7 @@ for n in $(seq ${nj}); do
     cat ${bfccdir}/raw_bfcc_${name}.${n}.scp || exit 1;
 done > ${data}/feats.scp || exit 1
 
-rm -f ${logdir}/wav.*.scp ${logdir}/segments.* 2>/dev/null
-
+rm -f ${logdir}/wav.*.scp  2>/dev/null
 
 nf=$(wc -l < ${data}/feats.scp)
 nu=$(wc -l < ${data}/wav.scp)
@@ -94,3 +93,4 @@ if [ ${nf} -ne ${nu} ]; then
 fi
 
 echo "Succeeded creating BFCC features for $name"
+

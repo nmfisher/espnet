@@ -25,29 +25,23 @@ echo "$0 $*" 1>&2 # Print the command line for logging
 
 . parse_options.sh || exit 1;
 
-if [ $# -lt 2 ] || [ $# -gt 14 ]; then
+if [ $# -lt 2 ] || [ $# -gt 8 ]; then
     echo "${help_message}" 1>&2
     exit 1;
 fi
 
 set -euo pipefail
 
-train_wav=$1
-train_durations=$2
-train_transcript=$3
-train_pitch_out=$4
-train_energy_out=$5
-valid_wav=$6
-valid_durations=$7
-valid_transcript=$8
-valid_pitch_out=$9
-valid_energy_out=${10}
-f0min=${11}
-f0max=${12}
-train_dump_dir=${13}
-valid_dump_dir=${14}
+wav=$1
+durations=$2
+transcript=$3
+pitch_out=$4
+energy_out=$5
+f0min=${6}
+f0max=${7}
+dump_dir=${8}
 
-data=$(dirname ${train_durations})
+data=$(dirname ${durations})
 logdir=${data}/log
 mkdir -p ${logdir}
 
@@ -55,11 +49,30 @@ sr=16000
 hop_length=160
 
 # TODO - put sample rate/hop_len/num clusters etc into config
-nj=1
-echo "Extracting F0 using durations at ${train_durations}"
+split_scps=""
+for n in $(seq ${nj}); do
+    split_scps="${split_scps} ${logdir}/wav.${n}.scp"
+done
+
+utils/split_scp.pl ${wav} ${split_scps} || exit 1;
+
+for n in $(seq ${nj}); do
+  ./utils/filter_scp.pl ${logdir}/wav.${n}.scp  ${durations}  > ${logdir}/durations.$n
+  ./utils/filter_scp.pl ${logdir}/wav.${n}.scp  ${transcript} > ${logdir}/transcript.$n
+done
+
+echo "Extracting F0 using durations at ${durations}, pitch/energy will be written to $pitch_out and $energy_out"
 ${cmd} JOB=1:${nj} ${logdir}/extract_f0.JOB.log \
     pyscripts/feats/extract-f0.py ${sr} ${hop_length}  \
-    ${train_wav} ${train_durations} ${train_transcript}  ${train_pitch_out} ${train_energy_out} \
-    ${valid_wav} ${valid_durations} ${valid_transcript} ${valid_pitch_out} ${valid_energy_out} \
-    ${f0min} ${f0max} ${train_dump_dir} ${valid_dump_dir}
+    ${logdir}/wav.JOB.scp ${logdir}/durations.JOB ${logdir}/transcript.JOB ${logdir}/pitch.JOB ${logdir}/energy.JOB \
+    ${f0min} ${f0max} ${dump_dir}
 
+for n in $(seq ${nj}); do
+    cat ${logdir}/pitch.$n || exit 1;
+done > ${pitch_out} || exit 1
+
+for n in $(seq ${nj}); do
+    cat ${logdir}/energy.$n || exit 1;
+done > ${energy_out} || exit 1
+
+rm -f ${logdir}/wav.*.scp ${logdir}/durations.* ${logdir}/transcript.* ${logdir}/pitch.* ${logdir}/energy.*

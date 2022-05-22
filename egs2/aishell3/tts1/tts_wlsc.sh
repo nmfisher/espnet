@@ -35,8 +35,8 @@ skip_upload=true     # Skip packing and uploading stages.
 skip_upload_hf=true # Skip uploading to hugging face stages.
 ngpu=1               # The number of gpus ("0" uses cpu, otherwise use gpu).
 num_nodes=1          # The number of nodes.
-nj=32                # The number of parallel jobs.
-inference_nj=32      # The number of parallel jobs in decoding.
+nj=8                # The number of parallel jobs.
+inference_nj=8      # The number of parallel jobs in decoding.
 gpu_inference=false  # Whether to perform gpu decoding.
 dumpdir=dump         # Directory to dump features.
 expdir=exp           # Directory to save experiments.
@@ -240,7 +240,7 @@ echo "spn" >> $token_list
 echo $oov >> $token_list
 echo $sos_eos >> $token_list
 
-_nj=1
+_nj=$nj
 
 # Set tag for naming of model directory
 if [ -z "${tag}" ]; then
@@ -453,14 +453,13 @@ else
 fi
 # ========================== Data preparation is done here. ==========================
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
-  ./scripts/feats/make_bfcc.sh --nj "${_nj}" ${data_feats}/${train_set}
-  ./scripts/feats/make_bfcc.sh --nj "${_nj}" ${data_feats}/${valid_set}
+  ./scripts/feats/make_bfcc.sh --nj "${_nj}" ${data_feats}/${train_set} || exit -1;
+  ./scripts/feats/make_bfcc.sh --nj "${_nj}" ${data_feats}/${valid_set} || exit -1;
 fi
 
 if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
             _teacher_train_dir="${teacher_dumpdir}/${train_set}"
             _teacher_valid_dir="${teacher_dumpdir}/${valid_set}"
-
 
             _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/durations,durations,text_int "
             _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/durations,durations,text_int "
@@ -486,26 +485,23 @@ if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
             mv "${data_feats}/${train_set}/durations_fixed" "${data_feats}/${train_set}/durations"
 
             mv "${data_feats}/${valid_set}/durations_fixed" "${data_feats}/${valid_set}/durations"
-
-
-            ./scripts/feats/extract_f0.sh \
-               ${data_feats}/${train_set}/wav.scp \
-               ${data_feats}/${train_set}/durations \
-               ${data_feats}/${train_set}/text \
-               ${data_feats}/${train_set}/pitch \
-               ${data_feats}/${train_set}/energy \
-               ${data_feats}/${valid_set}/wav.scp \
-               ${data_feats}/${valid_set}/durations \
-               ${data_feats}/${valid_set}/text \
-               ${data_feats}/${valid_set}/pitch \
-               ${data_feats}/${valid_set}/energy \
-               ${f0min} ${f0max} ${data_feats}/${train_set}/data ${data_feats}/${valid_set}/data
+            for dset in "${train_set}" "${valid_set}"; do
+                ./scripts/feats/extract_f0.sh --nj ${nj} \
+                ${data_feats}/${dset}/wav.scp \
+                ${data_feats}/${dset}/durations \
+                ${data_feats}/${dset}/text \
+                ${data_feats}/${dset}/pitch \
+                ${data_feats}/${dset}/energy \
+                ${f0min} ${f0max} ${data_feats}/${dset}/data
+            done
+            # ./scripts/normalize_f0.sh ${data_feats}/${train_set} ${data_feats}/${valid_set} 
+            
 
 fi
 
 if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ]; then
-    cp data/${train_set}/phone_word_mappings ${data_feats}/${train_set}
-    cp data/${valid_set}/phone_word_mappings ${data_feats}/${valid_set}
+    ./utils/filter_scp.pl ${data_feats}/${train_set}/feats.scp data/${train_set}/phone_word_mappings > ${data_feats}/${train_set}/phone_word_mappings
+    ./utils/filter_scp.pl ${data_feats}/${valid_set}/feats.scp data/${valid_set}/phone_word_mappings > ${data_feats}/${valid_set}/phone_word_mappings
     ./scripts/feats/average_feats.sh --nj "${_nj}" ${data_feats}/${train_set}
     ./scripts/feats/average_feats.sh --nj "${_nj}" ${data_feats}/${valid_set}
 fi

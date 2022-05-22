@@ -66,16 +66,17 @@ def main():
                 print(f"Using {args.word_phone_mappings_out}")
                 with WriteHelper(args.word_phone_mappings_out,compression_method=2) as word_phone_mapping_writer:
                         for ((utt_id, durations), \
-                            (_,phones,), \
-                            (_, feats), \
-                            (_,pitch_file), \
-                            (_, phone_word_mappings)) in \
+                            (utt_id2_,phones,), \
+                            (utt_id3, feats), \
+                            (utt_id4,pitch_file), \
+                            (utt_id5, phone_word_mappings)) in \
                                 zip(durations, \
                                     transcripts, \
                                     feats_reader, \
                                     _open(args.pitch), \
                                     _open(args.phone_word_mappings)):
-                            
+                            if utt_id5 != utt_id:
+                                raise Exception("Mismatched files")
                             phone_word_mappings = np.array([int(x) for x in phone_word_mappings])
                             # this is a list of W elements (where W is the number of words) where each element is the index in [phones] that marks the end of a word
                             # accordingly, [phones] is a phonetic transcription of N words
