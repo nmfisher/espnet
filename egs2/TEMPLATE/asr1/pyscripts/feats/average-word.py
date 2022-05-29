@@ -46,6 +46,9 @@ def _open(path):
             split = line.strip().split()
             yield (split[0], split[1:])
 
+'''
+    Averages frame-level features into word-level features. Uses durations file to map frames to phone-level features, then phone_word_mappings file to map phone-level features to word-level features.
+'''
 def main():
     parser = get_parser()
     args = parser.parse_args()

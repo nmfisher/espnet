@@ -13,14 +13,45 @@
 ##########################################################
 #                  TTS MODEL SETTING                     #
 ##########################################################
-tts: wlsc      # model architecture
+tts: wlsc_student      # model architecture
 tts_conf:             # keyword arguments for the selected model
+    # spk_embed_dim: 128
+    # phone_embed_dim: 128
+    # word_seq_embed_dim: 128
+    # word_seq_proj_dim: 128
+    # style_token_dim: 128
+    # word_seq_encoder_dropout: 0.0
+    # encoder_adim: 128
+    # encoder_aheads: 2
+    encoder_numblocks: 1
+    encoder_dropout_rate: 0.0
+    encoder_positional_dropout_rate: 0.1
+    encoder_attention_dropout_rate: 0.1
+    # encoder_conv_kernel_size: 5
+    # encoder_positionwise_layer_type: "linear"
+    # encoder_use_cnn_module: true
+    # style_encoder_aheads: 2
+    # decoder_adim: 512
+    # decoder_aheads: 2
+    decoder_numblocks: 3
+    decoder_positionwise_layer_type: "linear"
+    decoder_use_cnn_module: true
+    decoder_dropout_rate: 0.1
+    decoder_positional_dropout_rate: 0.1
+    decoder_attention_dropout_rate: 0.1
+    decoder_conv_kernel_size: 27
+    # prior_layers: 1
+    # duration_predictor_layers: 1
+    # duration_predictor_chans: 128
+    # duration_predictor_kernel_size: 5
+    # duration_predictor_dropout: 0.0
+    # range_predictor_layers: 1
+    # range_predictor_chans: 128
+    # range_predictor_kernel_size: 5
+    # range_predictor_dropout: 0.0
+    teacher_conf: ./exp/tts_train_wlsc_wlsc_phn_none/config.yaml
+    teacher_ckpt: ./exp/tts_train_wlsc_wlsc_phn_none/latest.pth
 
-# extra module for additional inputs
-#pitch_extract: dio           # pitch extractor type
-#pitch_normalize: global_mvn  # normalizer for the pitch feature
-#energy_extract: energy       # energy extractor type
-#energy_normalize: global_mvn # normalizer for the energy feature
 
 ##########################################################
 #            OPTIMIZER & SCHEDULER SETTING               #
@@ -31,7 +62,7 @@ optim_conf:            # keyword arguments for selected optimizer
 scheduler: noamlr      # scheduler type
 scheduler_conf:        # keyword arguments for selected scheduler
     model_size: 1536    # model size, a.k.a., attention dimension
-    warmup_steps: 4000 # the number of warmup steps
+    warmup_steps: 2000 # the number of warmup steps
 
 ##########################################################
 #                OTHER TRAINING SETTING                  #

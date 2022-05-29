@@ -72,6 +72,7 @@ sos_eos="<sos/eos>" # sos and eos symbols.
 
 # Training related
 train_config=""    # Config for training.
+student_train_config="" # Config for student model
 train_args=""      # Arguments for training, e.g., "--max_epoch 1".
                    # Note that it will overwrite args in train config.
 tag=""             # Suffix for training directory.
@@ -154,6 +155,7 @@ Options:
 
     # Training related
     --train_config  # Config for training (default="${train_config}").
+    --student_train_config  # Config for training (default="${student_train_config}").
     --train_args    # Arguments for training (default="${train_args}").
                     # e.g., --train_args "--max_epoch 1"
                     # Note that it will overwrite args in train config.
@@ -290,6 +292,7 @@ fi
 # The directory used for training commands
 if [ -z "${tts_exp}" ]; then
     tts_exp="${expdir}/tts_${tag}"
+    student_tts_exp="${expdir}/tts_${tag}_student"
 fi
 
 
@@ -727,6 +730,7 @@ if ! "${skip_train}"; then
                 --resume true \
                 --output_dir "${tts_exp}" \
                 --allow_variable_data_keys true \
+                --keep_nbest_models 10 \
                 ${_opts} ${train_args}
 
     fi
@@ -799,7 +803,8 @@ if ! "${skip_eval}"; then
                 _opts+="--data_path_and_name_and_type ${_data}/energy,energy,npy "
             fi
             
-            _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/phone_word_mappings,phone_word_mappings,text_int   " \
+            _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/phone_word_mappings,phone_word_mappings,text_int   " 
+            _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " 
 
             # Add X-vector to the inputs if needed
             if "${use_xvector}"; then
@@ -834,7 +839,7 @@ if ! "${skip_eval}"; then
             # 3. Submit decoding jobs
             log "Decoding started... log: '${_logdir}/tts_inference.*.log'  ${_speech_data}/${_scp},speech,${_type} "
             # shellcheck disable=SC2086
-            ${_cmd} --gpu "${_ngpu}" JOB=1:"${_nj}" "${_logdir}"/tts_inference.JOB.log \
+            ${_cmd} --gpu "${_ngpu}" JOB=1:${_nj} "${_logdir}"/tts_inference.JOB.log \
                 ${python} -m espnet2.bin.tts_inference \
                     --ngpu "${_ngpu}" \
                     --data_path_and_name_and_type "${_data}/text,text,text" \
@@ -904,7 +909,6 @@ else
     log "Skip the evaluation stages"
 fi
 
-
 packed_model="${tts_exp}/${tts_exp##*/}_${inference_model%.*}.zip"
 if [ -z "${download_model}" ]; then
     # Skip pack preparation if using a downloaded model
@@ -947,63 +951,251 @@ if [ -z "${download_model}" ]; then
     fi
 fi
 
-if ! "${skip_upload}"; then
-    if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
-        log "Stage 9: Upload model to Zenodo: ${packed_model}"
+if [ ${stage} -le 12 ] && [ ${stop_stage} -ge 12 ]; then
+    log "Stage 12: Training student model"
 
-        # To upload your model, you need to do:
-        #   1. Signup to Zenodo: https://zenodo.org/
-        #   2. Create access token: https://zenodo.org/account/settings/applications/tokens/new/
-        #   3. Set your environment: % export ACCESS_TOKEN="<your token>"
+     _train_dir="${data_feats}/${train_set}"
+    _valid_dir="${data_feats}/${valid_set}"
+    log "Stage 12: TTS Student Training: train_set=${_train_dir}, valid_set=${_valid_dir}, config=${student_train_config}"
 
-        if command -v git &> /dev/null; then
-            _creator_name="$(git config user.name)"
-            _checkout="
-git checkout $(git show -s --format=%H)"
-        else
-            _creator_name="$(whoami)"
-            _checkout=""
-        fi
-        # /some/where/espnet/egs2/foo/tts1/ -> foo/tt1
-        _task="$(pwd | rev | cut -d/ -f1-2 | rev)"
-        # foo/asr1 -> foo
-        _corpus="${_task%/*}"
-        _model_name="${_creator_name}/${_corpus}_$(basename ${packed_model} .zip)"
+    _opts="--config ${student_train_config}  "
 
-        # Generate description file
-        cat << EOF > "${tts_exp}"/description
-This model was trained by ${_creator_name} using ${_task} recipe in <a href="https://github.com/espnet/espnet/">espnet</a>.
-<p>&nbsp;</p>
-<ul>
-<li><strong>Python API</strong><pre><code class="language-python">See https://github.com/espnet/espnet_model_zoo</code></pre></li>
-<li><strong>Evaluate in the recipe</strong><pre>
-<code class="language-bash">git clone https://github.com/espnet/espnet
-cd espnet${_checkout}
-pip install -e .
-cd $(pwd | rev | cut -d/ -f1-3 | rev)
-# Download the model file here
-./run.sh --skip_data_prep false --skip_train true --download_model ${_model_name}</code>
-</pre></li>
-<li><strong>Config</strong><pre><code>$(cat "${tts_exp}"/config.yaml)</code></pre></li>
-</ul>
-EOF
-
-        # NOTE(kamo): The model file is uploaded here, but not published yet.
-        #   Please confirm your record at Zenodo and publish by yourself.
-
-        # shellcheck disable=SC2086
-        espnet_model_zoo_upload \
-            --file "${packed_model}" \
-            --title "ESPnet2 pretrained model, ${_model_name}, fs=${fs}, lang=${lang}" \
-            --description_file "${tts_exp}"/description \
-            --creator_name "${_creator_name}" \
-            --license "CC-BY-4.0" \
-            --use_sandbox false \
-            --publish false
+    if "${use_xvector}"; then
+        _xvector_train_dir="${data_feats}/${train_set}"
+        _xvector_valid_dir="${data_feats}/${valid_set}"
+        _opts+="--train_data_path_and_name_and_type ${_xvector_train_dir}/xvector.scp,spembs,kaldi_ark "
+        _opts+="--valid_data_path_and_name_and_type ${_xvector_valid_dir}/xvector.scp,spembs,kaldi_ark "
     fi
-else
-    log "Skip the uploading stage"
+
+    _teacher_train_dir="${teacher_dumpdir}/${train_set}"
+    _teacher_valid_dir="${teacher_dumpdir}/${valid_set}"
+    
+    _opts+="--train_data_path_and_name_and_type ${_train_dir}/text,text,text "
+    _opts+="--train_shape_file ${tts_stats_dir}/train/text_shape.${token_type} "
+    _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/text,text,text "
+    _opts+="--valid_shape_file ${tts_stats_dir}/valid/text_shape.${token_type} "
+
+    _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/feats.scp,speech,kaldi_ark "
+    _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/feats.scp,speech,kaldi_ark "
+
+    _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/durations,durations,text_int "
+    _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/durations,durations,text_int "
+    _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/pitch,pitch,npy "
+    _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/pitch,pitch,npy "
+    _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/energy,energy,npy "
+    _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/energy,energy,npy "
+    _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " \
+    _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " \
+    _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/phone_word_mappings,phone_word_mappings,text_int   " \
+    _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/phone_word_mappings,phone_word_mappings,text_int   " \
+    _opts+="--odim ${odim} "
+
+    if [ -e ${_teacher_train_dir}/probs ]; then
+        # Knowledge distillation case: use the outputs of the teacher model as the target
+        _scp=feats.scp
+        _type=npy
+    else
+        # Teacher forcing case: use groundtruth as the target
+        _scp=wav.scp
+        _type=sound
+    fi
+
+
+    # Add speaker ID to the inputs if needed
+    if "${use_sid}"; then
+        _opts+="--train_data_path_and_name_and_type ${_train_dir}/utt2sid,sids,text_int "
+        _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/utt2sid,sids,text_int "
+        _opts+="--num_speakers $(cat "${data_feats}/org/${train_set}/spk2sid" | wc -l)"
+    fi
+
+    # Add language ID to the inputs if needed
+    if "${use_lid}"; then
+        _opts+="--train_data_path_and_name_and_type ${_train_dir}/utt2lid,lids,text_int "
+        _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/utt2lid,lids,text_int "
+    fi
+
+    if [ "${feats_normalize}" = "global_mvn" ]; then
+        _opts+="--normalize_conf stats_file=${tts_stats_dir}/train/feats_stats.npz "
+    fi
+
+    log "Generate '${tts_exp}/run.sh'. You can resume the process from stage 6 using this script"
+    mkdir -p "${tts_exp}"; echo "${run_args} --stage 6 \"\$@\"; exit \$?" > "${tts_exp}/run.sh"; chmod +x "${tts_exp}/run.sh"
+
+    log "TTS training started... log: '${tts_exp}/train.log'"
+    if echo "${cuda_cmd}" | grep -e queue.pl -e queue-freegpu.pl &> /dev/null; then
+        # SGE can't include "/" in a job name
+        jobname="$(basename ${tts_exp})"
+    else
+        jobname="${tts_exp}/train.log"
+    fi
+
+    echo "$_opts" > /tmp/opts
+    
+    # shellcheck disable=SC2086
+    ${python} -m espnet2.bin.launch \
+        --cmd "${cuda_cmd} --name ${jobname}" \
+        --log "${student_tts_exp}"/train.log \
+        --ngpu "${ngpu}" \
+        --num_nodes "${num_nodes}" \
+        --init_file_prefix "${student_tts_exp}"/.dist_init_ \
+        --multiprocessing_distributed true -- \
+        ${python} -m "espnet2.bin.${tts_task}_train" \
+            --use_preprocessor true \
+            --token_type "${token_type}" \
+            --token_list "${token_list}" \
+            --non_linguistic_symbols "${nlsyms_txt}" \
+            --cleaner "${cleaner}" \
+            --g2p "${g2p}" \
+            --normalize "${feats_normalize}" \
+            --resume true \
+            --output_dir "${student_tts_exp}" \
+            --allow_variable_data_keys true \
+            ${_opts} ${train_args}
+
 fi
+
+if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
+        log "Stage 13: Decoding: training_dir=${student_tts_exp}"
+
+        if ${gpu_inference}; then
+            _cmd="${cuda_cmd}"
+            _ngpu=1
+        else
+            _cmd="${decode_cmd}"
+            _ngpu=0
+        fi
+
+        _opts=
+        if [ -n "${inference_config}" ]; then
+            _opts+="--config ${inference_config} "
+        fi
+
+        _scp=feats.scp
+        # if [[ "${audio_format}" == *ark* ]]; then
+            _type=kaldi_ark
+        # else
+        #     # "sound" supports "wav", "flac", etc.
+        #     _type=sound
+        # fi
+
+
+        for dset in ${test_sets}; do
+            _data="${data_feats}/${dset}"
+            _speech_data="${_data}"
+            _dir="${student_tts_exp}/${inference_tag}/${dset}"
+            _logdir="${_dir}/log"
+            mkdir -p "${_logdir}"
+
+            _ex_opts=""
+            if [ -n "${teacher_dumpdir}" ]; then
+                # Use groundtruth of durations
+                _teacher_dir="${teacher_dumpdir}/${dset}"
+                _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/durations,durations,text_int "
+                _opts+="--data_path_and_name_and_type ${_data}/pitch,pitch,npy "
+                _opts+="--data_path_and_name_and_type ${_data}/energy,energy,npy "
+            fi
+            
+            _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/phone_word_mappings,phone_word_mappings,text_int   " \
+
+            # Add X-vector to the inputs if needed
+            if "${use_xvector}"; then
+                _xvector_dir="${data_feats}/${dset}"
+                _ex_opts+="--data_path_and_name_and_type ${_xvector_dir}/xvector.scp,spembs,kaldi_ark "
+            fi
+
+            # Add spekaer ID to the inputs if needed
+            if "${use_sid}"; then
+                _ex_opts+="--data_path_and_name_and_type ${_data}/utt2sid,sids,text_int "
+                _opts+="--num_speakers $(cat "${data_feats}/org/${train_set}/spk2sid" | wc -l)"
+            fi
+
+            # Add language ID to the inputs if needed
+            if "${use_lid}"; then
+                _ex_opts+="--data_path_and_name_and_type ${_data}/utt2lid,lids,text_int "
+            fi
+
+            # 0. Copy feats_type
+            cp "${_data}/feats_type" "${_dir}/feats_type"
+
+            # 1. Split the key file
+            key_file=${_data}/text
+            split_scps=""
+            _nj=$(min "${inference_nj}" "$(<${key_file} wc -l)")
+            for n in $(seq "${_nj}"); do
+                split_scps+=" ${_logdir}/keys.${n}.scp"
+            done
+            # shellcheck disable=SC2086
+            utils/split_scp.pl "${key_file}" ${split_scps}
+
+            # 3. Submit decoding jobs
+            log "Decoding started... log: '${_logdir}/tts_inference.*.log'  ${_speech_data}/${_scp},speech,${_type} "
+            # shellcheck disable=SC2086
+            ${_cmd} --gpu "${_ngpu}" JOB=1:"${_nj}" "${_logdir}"/tts_inference.JOB.log \
+                ${python} -m espnet2.bin.tts_inference \
+                    --ngpu "${_ngpu}" \
+                    --data_path_and_name_and_type "${_data}/text,text,text" \
+                    --data_path_and_name_and_type ${_speech_data}/${_scp},speech,${_type} \
+                    --key_file "${_logdir}"/keys.JOB.scp \
+                    --model_file "${student_tts_exp}"/"${inference_model}" \
+                    --train_config "${student_tts_exp}"/config.yaml \
+                    --output_dir "${_logdir}"/output.JOB \
+                    --vocoder_file "${vocoder_file}" \
+                    ${_opts} ${_ex_opts} ${inference_args}
+
+            # 4. Concatenates the output files from each jobs
+            if [ -e "${_logdir}/output.${_nj}/norm" ]; then
+                mkdir -p "${_dir}"/norm
+                for i in $(seq "${_nj}"); do
+                     cat "${_logdir}/output.${i}/norm/feats.scp"
+                done | LC_ALL=C sort -k1 > "${_dir}/norm/feats.scp"
+            fi
+            if [ -e "${_logdir}/output.${_nj}/denorm" ]; then
+                mkdir -p "${_dir}"/denorm
+                for i in $(seq "${_nj}"); do
+                     cat "${_logdir}/output.${i}/denorm/feats.scp"
+                done | LC_ALL=C sort -k1 > "${_dir}/denorm/feats.scp"
+            fi
+            if [ -e "${_logdir}/output.${_nj}/speech_shape" ]; then
+                for i in $(seq "${_nj}"); do
+                     cat "${_logdir}/output.${i}/speech_shape/speech_shape"
+                done | LC_ALL=C sort -k1 > "${_dir}/speech_shape"
+            fi
+            if [ -e "${_logdir}/output.${_nj}/wav" ]; then
+                mkdir -p "${_dir}"/wav
+                for i in $(seq "${_nj}"); do
+                    mv -u "${_logdir}/output.${i}"/wav/*.wav "${_dir}"/wav
+                    rm -rf "${_logdir}/output.${i}"/wav
+                done
+                find "${_dir}/wav" -name "*.wav" | while read -r line; do
+                    echo "$(basename "${line}" .wav) ${line}"
+                done | LC_ALL=C sort -k1 > "${_dir}/wav/wav.scp"
+            fi
+            if [ -e "${_logdir}/output.${_nj}/att_ws" ]; then
+                mkdir -p "${_dir}"/att_ws
+                for i in $(seq "${_nj}"); do
+                    mv -u "${_logdir}/output.${i}"/att_ws/*.png "${_dir}"/att_ws
+                    rm -rf "${_logdir}/output.${i}"/att_ws
+                done
+            fi
+            if [ -e "${_logdir}/output.${_nj}/durations" ]; then
+                for i in $(seq "${_nj}"); do
+                     cat "${_logdir}/output.${i}/durations/durations"
+                done | LC_ALL=C sort -k1 > "${_dir}/durations"
+            fi
+            if [ -e "${_logdir}/output.${_nj}/focus_rates" ]; then
+                for i in $(seq "${_nj}"); do
+                     cat "${_logdir}/output.${i}/focus_rates/focus_rates"
+                done | LC_ALL=C sort -k1 > "${_dir}/focus_rates"
+            fi
+            if [ -e "${_logdir}/output.${_nj}/probs" ]; then
+                mkdir -p "${_dir}"/probs
+                for i in $(seq "${_nj}"); do
+                    mv -u "${_logdir}/output.${i}"/probs/*.png "${_dir}"/probs
+                    rm -rf "${_logdir}/output.${i}"/probs
+                done
+            fi
+        done
+    fi
 
 if ! "${skip_upload_hf}"; then
     if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then

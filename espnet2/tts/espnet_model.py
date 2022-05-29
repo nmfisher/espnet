@@ -250,6 +250,7 @@ class ESPnetTTSModel(AbsESPnetModel):
         durations: Optional[torch.Tensor] = None,
         pitch: Optional[torch.Tensor] = None,
         energy: Optional[torch.Tensor] = None,
+        feats_word_avg:Optional[torch.Tensor] = None,
         **decode_config,
     ) -> Dict[str, torch.Tensor]:
         """Caclualte features and return them as a dict.
@@ -322,6 +323,8 @@ class ESPnetTTSModel(AbsESPnetModel):
             input_dict.update(energy=energy)
         if durations is not None:
             input_dict.update(durations =durations )
+        if feats_word_avg is not None:
+            input_dict.update(feats_word_avg=feats_word_avg)
         
         output_dict = self.tts.inference(**input_dict, **decode_config)
 

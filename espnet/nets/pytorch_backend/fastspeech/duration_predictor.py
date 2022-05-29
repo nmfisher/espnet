@@ -68,14 +68,14 @@ class DurationPredictor(torch.nn.Module):
         self.linear = torch.nn.Linear(n_chans, 1)
 
     def _forward(self, xs, x_masks: Optional [ torch.Tensor ]=None, is_inference:Boolean=False):
-
+        
         xs = xs.transpose(1, 2)  # (B, idim, Tmax)
 
         for f in self.conv:
             xs = f(xs)  # (B, C, Tmax)
-
+        
         # NOTE: calculate in log domain
-        xs = self.linear(xs.transpose(1, 2)).squeeze(-1)  # (B, Tmax)
+        xs = self.linear(xs.transpose(1, 2)).squeeze(2)  # (B, Tmax)
 
         if is_inference:
             # NOTE: calculate in linear domain
@@ -117,7 +117,7 @@ class DurationPredictor(torch.nn.Module):
             LongTensor: Batch of predicted durations in linear domain (B, Tmax).
 
         """
-        return self._forward(xs, x_masks, True)
+        return self._forward(xs, x_masks, True).view(xs.size(0), xs.size(1))
 
 
 class DurationPredictorLoss(torch.nn.Module):

@@ -15,6 +15,7 @@ from typing import Union
 
 import numpy as np
 import torch
+from espnet2.tts.wlsc.wlsc_student import WLSCStudent
 
 from typeguard import check_argument_types
 from typeguard import check_return_type
@@ -103,6 +104,7 @@ tts_choices = ClassChoices(
         fastspeech=FastSpeech,
         fastspeech2=FastSpeech2,
         wlsc=WLSC,
+        wlsc_student=WLSCStudent,
         # NOTE(kan-bayashi): available only for inference
         vits=VITS,
         joint_text2wav=JointText2Wav,
@@ -273,7 +275,7 @@ class TTSTask(AbsTask):
             retval = ("spembs", "durations", "pitch", "energy", "sids", "lids", "phone_word_mappings","word_phone_mappings")
         else:
             # Inference mode
-            retval = ("spembs", "speech", "durations", "pitch", "energy", "sids", "lids", "phone_word_mappings", "word_phone_mappings")
+            retval = ("spembs", "speech", "durations", "pitch", "energy", "sids", "lids", "phone_word_mappings", "word_phone_mappings","feats_word_avg")
         return retval
 
     @classmethod

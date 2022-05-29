@@ -18,7 +18,6 @@ from typing import Dict
 from typing import Optional
 
 from espnet2.bin.tts_inference import Text2Speech
-from espnet2.bin.tts_inference import Text2Speech
 from espnet2.utils.types import str_or_none
 
 import torch.nn.functional as F
@@ -38,13 +37,11 @@ if __name__ == "__main__":
     parser = get_parser()
     args = parser.parse_args()
 
-    #logfmt = "%(asctime)s (%(module)s:%(lineno)d) %(levelname)s: %(message)s"
-    # logging.basicConfig(filename='onnx.log', encoding='utf-8', level=logging.INFO, format=logfmt)
-
     # Load Pretrained model and testing wav generation
-    #logging.info("Preparing pretrained model from: %s", args.tts_tag)
     device = "cpu"#text2speech.device
     tts = Text2Speech.from_pretrained(
+        # model_file="./exp/tts_train_wlsc_wlsc_phn_none_student/latest.pth",
+        # train_config="./exp/tts_train_wlsc_wlsc_phn_none_student/inference.yaml",
         model_file="./exp/tts_train_wlsc_wlsc_phn_none/latest.pth",
         train_config="./exp/tts_train_wlsc_wlsc_phn_none/config.yaml",
         vocoder_tag=None,
@@ -52,33 +49,61 @@ if __name__ == "__main__":
         num_speakers=9
     )
 
-    # Prepare modules for conversion
-    logging.info("Generate ONNX models")
+    # # Prepare modules for conversion
+    # logging.info("Generate ONNX models")
     with torch.no_grad():
         
         model = tts.model.tts
+    #     import torch.nn.utils.prune as prune
+    #     handled = []
+    #     modules = [model]
+    #     params = []
+    #     while len(modules) > 0:
+    #         module = modules.pop()
+
+    #         if module in handled:
+    #             print(f"{name} already handled, skipping")
+    #             continue
+
+    #         if len(list(module.named_children())) == 0:
+    #             for name, param in module.named_parameters():
+    #                 if name in ['bias']:
+    #                     params += [ (module, 'bias') ]
+    #                 elif name in ['weight']:
+    #                     params += [ (module, 'weight') ]
+    #         else:
+    #             modules += list([child for name, child in module.named_children()])
+    #         handled += [ module ] 
+            
+    #     if len(params) > 0:
+    #         print(f"Params for pruning : {params}")
+    #         # raise Exception()
+    #         prune.global_unstructured(
+    #             params,
+    #             pruning_method=prune.L1Unstructured,
+    #             amount=0.7,
+    #         )
+    #         for module, param in params:
+    #             prune.remove(module, param)
         
         model.eval()
         #import numpy as np
-        text = torch.tensor([140,130,69,131,115,144,99,18,99,14],dtype=torch.int).to(device)
-        phone_word_mappings = torch.tensor([0,0,0,1,1,1,2,2,2,2])
-        # with open("/tmp/tmp.feats.txt") as infile:
-        #     lines = infile.readlines()
-        #     data =[]
-        #     for line in lines[1:]:
-        #         line = line.strip().split(" ")
-        #         line = [l for l in line  if len(l) > 0 and l != "]"]
-        #         data += [[float(x) for x in line]]
-        # feats = np.fromfile("exp/tts_train_gst+xvector_conformer_fastspeech2_bfcc_phn_none/inference_train.loss.best/test/log/output.28/norm/zhCNXiaoyouNeural-d270e74e19ca5b9a8ff86f4d80214dfa_duration_1.1.npy",dtype=np.float32).reshape(-1,20)
-        # feats = torch.tensor(feats).to(device)
+        text = torch.tensor([154,  22,  80,  19,  69,  18,  57,  32, 132,  71,  68,  14,  97, 154],dtype=torch.int).to(device)
+        phone_word_mappings = torch.tensor([0, 1, 1, 2, 2, 3, 3, 4, 4, 4, 4, 5, 5, 6])
         feats = torch.randn(150,20).to(device) # fake BFCCs
-        sids = torch.tensor([4]).to(device) # speaker IDs
+        feats_avg = torch.randn(7,20).to(device) # fake BFCCs
+        sids = torch.tensor([3]).to(device) # speaker IDs
 
         # plain method invocation to confirm that everything works correctly outside torch.jit.script
-        odict = model.inference(text, feats=feats, sids=sids, phone_word_mappings=phone_word_mappings)
-        odict["feat_gen"].detach().numpy().tofile("/tmp/torch_bfccs")
+        odict = model.export(text, sids=sids, phone_word_mappings=phone_word_mappings,feats_word_avg=feats_avg)
         
-        inputs = (text, feats, sids,phone_word_mappings)
+        odict[0].detach().numpy().tofile("/tmp/torch_bfccs")
+
+        print(odict[0])
+        
+        # odict["feat_gen"].detach().numpy().tofile("/tmp/torch_bfccs")
+        
+        inputs = (text, sids,phone_word_mappings,feats_avg)
 
         model.forward = model.export
         
@@ -88,15 +113,15 @@ if __name__ == "__main__":
         # export
         torch.onnx.export(
             scripted_module,
-            # model,
+            #model,
             inputs,
             'tts_model.onnx',
             export_params=True,
-            opset_version=13,
+            opset_version=14,
             do_constant_folding=False,
             verbose=True,
             input_names=[
-                'phones', 'style_reference', 'speaker_id', 'phone_word_mappings'
+                'phones', 'speaker_id', 'phone_word_mappings','style_reference', 
             ],
             output_names=['pcm','durations'],
             dynamic_axes={
@@ -113,8 +138,18 @@ if __name__ == "__main__":
                     0: 'olen', 
                 },
                 'durations': {
-                    1: 'length'
+                    0: 'length'
                 },
             }
         )
     print("Done!")
+
+        # with open("/tmp/tmp.feats.txt") as infile:
+        #     lines = infile.readlines()
+        #     data =[]
+        #     for line in lines[1:]:
+        #         line = line.strip().split(" ")
+        #         line = [l for l in line  if len(l) > 0 and l != "]"]
+        #         data += [[float(x) for x in line]]
+        # feats = np.fromfile("exp/tts_train_gst+xvector_conformer_fastspeech2_bfcc_phn_none/inference_train.loss.best/test/log/output.28/norm/zhCNXiaoyouNeural-d270e74e19ca5b9a8ff86f4d80214dfa_duration_1.1.npy",dtype=np.float32).reshape(-1,20)
+        # feats = torch.tensor(feats).to(device)
