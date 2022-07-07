@@ -46,6 +46,87 @@ from espnet.nets.pytorch_backend.transformer.attention import (
 
 
 from espnet2.tts.wlsc.loss import WLSCLoss
+from espnet2.tts.wlsc.grad_reversal_layer import GradientReversalLayer
+
+class SpeakerEmbeddingPredictor(torch.nn.Module):
+    """Speaker classifier module for HQSS. Simply FFN with gradient reversal.
+    """
+
+    def __init__(
+        self,
+        idim,
+        odim
+    ):
+        """Initialize SC module.
+
+        Args:
+            idim (int) Dimension of input features (usually num_mels)
+            nspeakers (int) number of speakers.
+            hidden_size (int, optional) Dimension of FFN hidden size
+        """
+        super(SpeakerEmbeddingPredictor, self).__init__()
+        # store the hyperparameters
+        # self.cnn = torch.nn.Conv1d(idim,odim,3)       
+        # self.rnn = torch.nn.GRU(idim,odim,3)       
+        # self.attn = BaseMultiHeadedAttention(
+        #     8,
+        #     odim,
+        #     0.05,
+        # )
+        self.enc = ConformerEncoder(
+            idim=idim,
+            attention_dim=256,
+            attention_heads=8,
+            num_blocks=5,
+            dropout_rate=0.5,
+            positional_dropout_rate=0.5,
+            attention_dropout_rate=0.5,
+            input_layer="linear",
+            # positionwise_layer_type=encoder_positionwise_layer_type,
+            # positionwise_conv_kernel_size=encoder_conv_kernel_size, 
+            pos_enc_layer_type="rel_pos",   
+            selfattention_layer_type="rel_selfattn", 
+            activation_type="swish",             
+            macaron_style=False,
+            # use_cnn_module=encoder_use_cnn_module,
+            # cnn_module_kernel=7
+        )
+
+    def forward(self, xs, mask):
+        """Calculate forward propagation.
+
+        Args:
+            xs (Tensor): Batch of the padded sequence. Either character ids (B, Tmax)
+                or acoustic feature (B, Tmax, idim * encoder_reduction_factor). Padded
+                value should be 0.
+            ilens (LongTensor): Batch of lengths of each input batch (B,).
+
+        Returns:
+            Tensor: Batch of the sequences of encoder states(B, Tmax, eunits).
+            LongTensor: Batch of lengths of each sequence (B,)
+
+        """
+        outs, m = self.enc(xs,mask)
+        return outs.sum(1)
+        # return self.cnn(xs.transpose(1,2)).sum(-1)
+        # out, _ = self.rnn(xs)
+        # attn_out = self.attn(out, out, out, mask)
+        # return attn_out.sum(1)
+
+    
+    def inference(self, x):
+        """Inference.
+
+        Args:
+            x (Tensor): The sequeunce of character ids (T,)
+                    or acoustic feature (T, idim * encoder_reduction_factor).
+
+        Returns:
+            Tensor: The sequences of encoder states(T, eunits).
+
+        """
+        raise Exception("Should not be used during inference")
+
 
 class PriorEncoder(torch.nn.Module):
     def __init__(self,idim, gru_units, gru_layers):
@@ -87,11 +168,11 @@ class GaussianUpsampler(torch.nn.Module):
         return upsampled.view(feats.size(0), outlen, feats.size(2))
 
 class WordStyleEncoder(torch.nn.Module):
-    def __init__(self,idim, style_token_dim, gru_layers, num_style_tokens=15, num_attn_heads=4):
+    def __init__(self,idim, style_token_dim, gru_layers, num_style_tokens=15, num_attn_heads=4,rnn_dropout=0.1, mha_dropout=0.1):
         super().__init__()
         self.num_style_tokens = num_style_tokens
         self.style_tokens = torch.nn.Parameter(torch.randn(1, self.num_style_tokens,style_token_dim))
-        self.gru = torch.nn.GRU(idim, style_token_dim, gru_layers, batch_first=True, dropout=0.0)
+        self.gru = torch.nn.GRU(idim, style_token_dim, gru_layers, batch_first=True, dropout=rnn_dropout)
         self.gru_units = style_token_dim
         self.gru.flatten_parameters()
         self.gru_layers = gru_layers
@@ -99,7 +180,7 @@ class WordStyleEncoder(torch.nn.Module):
         self.attn = BaseMultiHeadedAttention(
             num_attn_heads,
             style_token_dim,
-            0.0,
+            mha_dropout,
         )
 
     # feats_averaged is BxLwxF
@@ -128,13 +209,14 @@ class WLSC(AbsTTS):
         word_seq_embed_dim:Optional[int]=256,
         word_seq_proj_dim:Optional[int]=256,
         style_token_dim:Optional[int]=256,
-        word_seq_encoder_dropout:Optional[float]=0.0,
+        word_seq_encoder_dropout:Optional[float]=0.1,
         encoder_adim:Optional[int]=256,
+        encoder_linear_units:Optional[int]=2048,
         encoder_aheads:Optional[int]=2,
         encoder_numblocks:Optional[int]=5,
-        encoder_dropout_rate:Optional[float]=0.0,
-        encoder_positional_dropout_rate:Optional[float]=0.0,
-        encoder_attention_dropout_rate:Optional[float]=0.0,
+        encoder_dropout_rate:Optional[float]=0.1,
+        encoder_positional_dropout_rate:Optional[float]=0.1,
+        encoder_attention_dropout_rate:Optional[float]=0.1,
         encoder_conv_kernel_size:Optional[int]=3, 
         encoder_positionwise_layer_type="conv1d",
         encoder_use_cnn_module=False,
@@ -142,25 +224,28 @@ class WLSC(AbsTTS):
         decoder_adim:Optional[int]=1024,
         decoder_aheads:Optional[int]=2,
         decoder_numblocks:Optional[int]=5,
-        decoder_dropout_rate:Optional[float]=0.0,
-        decoder_positional_dropout_rate:Optional[float]=0.0,
-        decoder_attention_dropout_rate:Optional[float]=0.0,
-        decoder_conv_kernel_size:Optional[int]=3,
+        decoder_dropout_rate:Optional[float]=0.1,
+        decoder_positional_dropout_rate:Optional[float]=0.1,
+        decoder_attention_dropout_rate:Optional[float]=0.1,
         decoder_positionwise_layer_type="conv1d", 
+        decoder_positionwise_conv_kernel_size=3,
         decoder_use_cnn_module=False,
+        decoder_linear_units=2048,
+        decoder_cnn_module_kernel=31,
         prior_layers:Optional[int]=2,
         duration_predictor_layers:Optional[int]=2,
         duration_predictor_chans:Optional[int]=256,
         duration_predictor_kernel_size:Optional[int]=3,
-        duration_predictor_dropout=0.0,
+        duration_predictor_dropout=0.1,
         range_predictor_layers:Optional[int]=2,
         range_predictor_chans:Optional[int]=256,
         range_predictor_kernel_size:Optional[int]=3,
-        range_predictor_dropout=0.0,
+        range_predictor_dropout=0.1,
         postnet_layers:Optional[int]=5,
         postnet_chans:Optional[int]=512,
         postnet_filts:Optional[int]=5,
-        postnet_dropout:Optional[float]=0.0
+        postnet_dropout:Optional[float]=0.1,
+        proj_up_down:Optional[bool]=False
     ):
         """Initialize WLSC module.
         """
@@ -175,22 +260,27 @@ class WLSC(AbsTTS):
         self.spks = spks
         
         # we can't set self.spk_embed_dim because ESPnet will expect speaker embeddings to be passed in
-        self.spk_embed_dim = None 
+        self.spk_embed_dim = spk_embed_dim
         self.spk_embed_layer_dim = spk_embed_dim
         
         # unused but need to preserve this property for compliance with ESPNet API
         self.langs = None
 
-        self.spk_embed = torch.nn.Embedding(
-            num_embeddings=self.spks+1, embedding_dim=self.spk_embed_layer_dim, padding_idx=self.spks
-        )
+        # self.spk_embed = torch.nn.Embedding(
+        #     num_embeddings=self.spks+1, embedding_dim=self.spk_embed_layer_dim, padding_idx=self.spks
+        # )
 
-        self.speaker_classifier = SpeakerClassifier(self.spk_embed_layer_dim, self.spks, spk_classifier_size)
+        # self.speaker_classifier = SpeakerClassifier(self.spk_embed_layer_dim, self.spks, spk_classifier_size)
+        self.speaker_emb_predictor = SpeakerEmbeddingPredictor(style_token_dim, self.spk_embed_dim)
+
+        self.gradient_reversal_layer = GradientReversalLayer(0.1)
                 
         # set padding idx
         self.padding_idx = 0
 
         self.phone_embed_dim = phone_embed_dim
+        self.pitch_embed_dim = phone_embed_dim
+        self.energy_embed_dim = phone_embed_dim
 
         encoder_input_layer = torch.nn.Embedding(
             num_embeddings=idim, embedding_dim=self.phone_embed_dim, padding_idx=self.padding_idx
@@ -214,6 +304,7 @@ class WLSC(AbsTTS):
             positional_dropout_rate=encoder_positional_dropout_rate,
             attention_dropout_rate=encoder_attention_dropout_rate,
             input_layer=encoder_input_layer,
+            linear_units=encoder_linear_units,
             positionwise_layer_type=encoder_positionwise_layer_type,
             positionwise_conv_kernel_size=encoder_conv_kernel_size, 
             pos_enc_layer_type="rel_pos",   
@@ -227,7 +318,7 @@ class WLSC(AbsTTS):
         self.word_seq_proj = torch.nn.Linear(self.word_seq_embedding_dim, self.word_seq_proj_dim)
         self.style_token_dim = style_token_dim
         self.word_style_encoder = WordStyleEncoder(self.odim,self.style_token_dim, style_encoder_aheads)
-
+        self.encoder_adim = encoder_adim
         self.decoder_adim = decoder_adim
 
         self.dec = ConformerEncoder(
@@ -237,25 +328,26 @@ class WLSC(AbsTTS):
             input_layer=None,
             num_blocks=decoder_numblocks,
             dropout_rate=decoder_dropout_rate,
+            linear_units=decoder_linear_units,
             positional_dropout_rate=decoder_positional_dropout_rate,
             attention_dropout_rate=decoder_attention_dropout_rate,
             positionwise_layer_type=decoder_positionwise_layer_type,
-            positionwise_conv_kernel_size=decoder_conv_kernel_size, 
+            positionwise_conv_kernel_size=decoder_positionwise_conv_kernel_size, 
             pos_enc_layer_type="rel_pos",   
             selfattention_layer_type="rel_selfattn", 
             activation_type="swish",             
             macaron_style=False,
             use_cnn_module=decoder_use_cnn_module,
-            cnn_module_kernel=31,
+            cnn_module_kernel=3#decoder_cnn_module_kernel,
         )
-
+        concat_dim = self.word_seq_embedding_dim + self.phone_embed_dim + self.style_token_dim + spk_embed_dim
         self.prior = PriorEncoder(idim=self.phone_embed_dim + self.word_seq_embedding_dim * 2, gru_units=self.style_token_dim,gru_layers=prior_layers)
 
         self.feat_out = torch.nn.Linear(decoder_adim, odim)
 
         # define duration predictor
         self.duration_predictor = DurationPredictor(
-            idim=decoder_adim, # concatenated size
+            idim=concat_dim, # concatenated size # TODO fix this
             n_layers=duration_predictor_layers,
             n_chans=duration_predictor_chans,
             kernel_size=duration_predictor_kernel_size,
@@ -263,7 +355,7 @@ class WLSC(AbsTTS):
         )
 
         self.range_predictor = RangePredictor(
-            idim=decoder_adim, # concatenated size
+            idim=concat_dim, # concatenated size # TODO fix this
             n_layers=range_predictor_layers,
             n_chans=range_predictor_chans,
             kernel_size=range_predictor_kernel_size,
@@ -287,9 +379,20 @@ class WLSC(AbsTTS):
             use_masking=True, use_weighted_masking=False
         )
 
-        for c in [ self.spk_embed, self.duration_predictor, self.range_predictor, self.prior, self.feat_out, self.enc, self.dec, self.word_style_encoder, self.word_seq_enc, self.word_seq_proj ]:
+        for c in [ 
+            # self.spk_embed, 
+            self.speaker_emb_predictor,
+        self.duration_predictor, self.range_predictor, self.prior, self.feat_out, self.enc, self.dec, self.word_style_encoder, self.word_seq_enc, self.word_seq_proj ]:
             pytorch_total_params = sum(p.numel() for p in c.parameters())
             print(f"params for {type(c).__name__} : {pytorch_total_params}")
+        # self.proj_up_down = proj_up_down
+        
+        # if self.proj_up_down:
+        #     print("SETTING")
+        #     self.enc_proj_up = torch.nn.Linear(self.encoder_adim, 256)
+        #     self.enc_proj_down = torch.nn.Linear(256, self.encoder_adim)    
+        #     self.dec_proj_up = torch.nn.Linear(self.decoder_adim, 1024)
+        #     self.dec_proj_down = torch.nn.Linear(1024, self.decoder_adim)
         
 
     # embeddings are phonetic token embeddings, BxLpxE
@@ -410,7 +513,8 @@ class WLSC(AbsTTS):
         pitch_lengths:torch.Tensor,
         energy:torch.Tensor,
         energy_lengths:torch.Tensor,
-        sids: torch.Tensor
+        sids: torch.Tensor,
+        spembs: torch.Tensor
         # is_inference: bool,
     ) -> torch.Tensor:
         """Calculate forward propagation. 
@@ -446,13 +550,21 @@ class WLSC(AbsTTS):
 
         d_masks = make_pad_mask(ilens).to(text.device)
 
+        # forward decoder
+
         # embed speaker
-        spembs = self.spk_embed(sids)
+        # spembs = self.spk_embed(sids)
+        # raise Exception(spembs.size())
        
         # encode style
         word_style_enc = self.word_style_encoder(feats_word_avg)
 
-        spk_class = self.speaker_classifier(word_style_enc)
+        word_masks = make_pad_mask(feats_word_avg_lengths).to(text.device)
+
+        # spk_class = self.speaker_classifier(word_style_enc)
+        spk_emb_preds = self.gradient_reversal_layer(self.speaker_emb_predictor(word_style_enc, word_masks.unsqueeze(2)))
+        # don't allow gradient flow when using shuffled speaker embeddings, we just want to see how predictive the style embeddings are of the speaker identity
+        # spk_emb_preds = self.speaker_emb_predictor(word_style_enc.detach(), word_masks.unsqueeze(2))
 
         # encode phone sequence
         phone_enc, _ = self.enc(text, d_masks.unsqueeze(1))
@@ -460,7 +572,6 @@ class WLSC(AbsTTS):
         # linear project
         phone_enc_proj = self.word_seq_proj(phone_enc)
 
-        
         # average by word boundaries
         phone_enc_averaged = self.average(phone_enc_proj, phone_word_mappings, d_masks)
 
@@ -475,16 +586,11 @@ class WLSC(AbsTTS):
         # predict durations & ranges        
         d_outs = self.duration_predictor(concatenated, d_masks)
         r_outs = self.range_predictor(concatenated, d_masks)
-
+        
         # apply Gaussian upsampling
         upsampled = self.length_regulator(concatenated, r_outs, durations)  # (B, T_feats, adim)
-
-        is_inference = False
-        # forward decoder
-        if feats_lengths is not None and not is_inference:
-            h_masks = self._source_mask(feats_lengths)
-        else:
-            h_masks = torch.ones(1, concatenated.size(1), dtype=torch.bool).to(concatenated.device)
+        
+        h_masks = self._source_mask(feats_lengths)        
         
         zs, _ = self.dec(upsampled, h_masks)  # (B, T_feats, adim)
 
@@ -496,7 +602,7 @@ class WLSC(AbsTTS):
             before_outs.transpose(1, 2)
         ).transpose(1, 2)
 
-        l1_loss, duration_loss, prior_loss, spk_loss = self.criterion(
+        l1_loss, duration_loss, prior_loss, spk_loss  = self.criterion( 
             after_outs=before_outs,
             before_outs=after_outs,
             word_style_enc=word_style_enc,
@@ -506,7 +612,10 @@ class WLSC(AbsTTS):
             ds=durations,
             ilens=ilens,
             olens=feats_lengths,
-            sids=sids,spk_class=spk_class,
+            sids=sids,
+            # spk_class=spk_class,
+            spk_emb_preds=spk_emb_preds,
+            spk_embs=spembs
         )
         loss = duration_loss + l1_loss + prior_loss + spk_loss
 
@@ -549,9 +658,10 @@ class WLSC(AbsTTS):
         text: torch.Tensor,
         sids:torch.Tensor,
         phone_word_mappings:torch.Tensor,
-        feats_word_avg: torch.Tensor 
+        feats_word_avg: torch.Tensor,
+        spembs:torch.Tensor,
     ) -> Tuple[torch.Tensor,torch.Tensor]:
-        return self._inference(text, sids=sids,phone_word_mappings=phone_word_mappings,feats_word_avg=feats_word_avg)     
+        return self._inference(text, sids=sids,phone_word_mappings=phone_word_mappings,feats_word_avg=feats_word_avg,spembs=spembs)     
 
     def inference(
         self,
@@ -567,6 +677,7 @@ class WLSC(AbsTTS):
         pitch_lengths:Optional[torch.Tensor] = None,
         feats: Optional[torch.Tensor] = None,
         energy: Optional[torch.Tensor] = None,
+        spembs: torch.Tensor = None,
         threshold: float = 0.5,
         minlenratio: float = 0.0,
         maxlenratio: float = 10.0,
@@ -586,6 +697,7 @@ class WLSC(AbsTTS):
             feats_lengths=feats_lengths, 
             pitch_lengths=pitch_lengths,
             energy=energy,
+            spembs=spembs,
             threshold=threshold, 
             minlenratio=minlenratio, 
             maxlenratio=maxlenratio, 
@@ -604,6 +716,7 @@ class WLSC(AbsTTS):
         feats_word_avg_lengths: Optional[torch.Tensor] = None,
         durations:Optional[torch.Tensor] = None,
         pitch:Optional[torch.Tensor] = None,
+        spembs:torch.Tensor = None,
         durations_lengths:Optional[torch.Tensor] = None,
         feats_lengths:Optional[torch.Tensor] = None,
         pitch_lengths:Optional[torch.Tensor] = None,
@@ -659,12 +772,15 @@ class WLSC(AbsTTS):
         # encode phone sequence
         phone_enc, _ = self.enc(text, ilens)
 
+        # if self.proj_up_down:
+        #     phone_enc = self.enc_proj_down(self.enc_proj_up(phone_enc))
+
         phone_enc = phone_enc.reshape(phone_word_mappings.size(0),phone_word_mappings.size(1),-1)
 
         # linear project
         phone_enc_proj = self.word_seq_proj(phone_enc)
 
-        spembs = self.spk_embed(sids).unsqueeze(0)
+        # spembs = self.spk_embed(sids).unsqueeze(0)
 
         # average by word boundaries
         phone_enc_averaged = self.average(phone_enc_proj, phone_word_mappings, d_masks).view(1, phone_word_mappings.max()+1, -1)
@@ -675,15 +791,19 @@ class WLSC(AbsTTS):
 
         word_style_enc = self.word_style_encoder(feats_word_avg)
 
-        #for i in range(15):
+        # prior_out += (0.05 * word_style_enc.sum(1))
+
+        # for i in range(15):
         # style_token = int(os.environ["STYLE_TOKEN"])
         # style_weighting = float(os.environ["STYLE_WEIGHTING"])
         # prior_out += (style_weighting * self.word_style_encoder.style_tokens[:,style_token,:].unsqueeze(1).expand(prior_out.size()))
         # prior_out = self.word_style_encoder.style_tokens[:,2,:].unsqueeze(1).expand(prior_out.size())
 
+        spembs = spembs.unsqueeze(0)
+
         concatenated = self.concatenate(word_enc_out, phone_enc_proj, phone_word_mappings, \
-        # prior_out, 
-        word_style_enc,
+        prior_out, 
+        #word_style_enc,
         spembs)
 
         # concatenated = concatenated.view(phone_enc_proj.size(0), phone_enc_proj.size(1), self.decoder_adim)
@@ -696,11 +816,14 @@ class WLSC(AbsTTS):
 
         # apply Gaussian upsampling
         upsampled = self.length_regulator(concatenated, r_outs, d_outs) #durations.unsqueeze(0))  # (B, T_feats, adim)
-#        upsampled = self.length_regulator(concatenated, torch.zeros(r_outs.size()), durations.unsqueeze(0))  # (B, T_feats, adim)
+        #upsampled = self.length_regulator(concatenated, torch.zeros(r_outs.size()), durations.unsqueeze(0))  # (B, T_feats, adim)
         
         h_masks = torch.ones(1, upsampled.size(1), dtype=torch.bool).to(concatenated.device)
         
         zs, _ = self.dec(upsampled,h_masks)  # (B, T_feats, adim)
+
+        # if self.proj_up_down:
+        #     zs = self.dec_proj_down(self.dec_proj_up(zs))
                 
         before_outs = self.feat_out(zs).view(
             zs.size(0), -1, self.odim
@@ -710,7 +833,7 @@ class WLSC(AbsTTS):
             before_outs.transpose(1, 2)
         ).transpose(1, 2)
         
-        return before_outs, d_outs
+        return after_outs, d_outs
         
     @torch.jit.ignore
     def _plot_and_save_attention(self, att_w, filename, xtokens=None, ytokens=None):
