@@ -24,18 +24,20 @@ tts_conf:             # keyword arguments for the selected model
     # encoder_adim: 128
     # encoder_aheads: 2
     encoder_numblocks: 1
-    # encoder_dropout_rate: 0.0
-    # encoder_positional_dropout_rate: 0.0
-    # encoder_attention_dropout_rate: 0.0
+    encoder_dropout_rate: 0.0
+    encoder_positional_dropout_rate: 0.1
+    encoder_attention_dropout_rate: 0.1
     # encoder_conv_kernel_size: 5
     # style_encoder_aheads: 2
     # decoder_adim: 512
     # decoder_aheads: 2
     decoder_numblocks: 2
-    # decoder_dropout_rate: 0.0
-    # decoder_positional_dropout_rate: 0.0
-    # decoder_attention_dropout_rate: 0.0
-    # decoder_conv_kernel_size: 5
+    decoder_positionwise_layer_type: "linear"
+    decoder_use_cnn_module: true
+    decoder_dropout_rate: 0.1
+    decoder_positional_dropout_rate: 0.1
+    decoder_attention_dropout_rate: 0.1
+    decoder_conv_kernel_size: 19
     # prior_layers: 1
     # duration_predictor_layers: 1
     # duration_predictor_chans: 128
