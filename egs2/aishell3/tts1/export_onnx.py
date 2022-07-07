@@ -40,10 +40,10 @@ if __name__ == "__main__":
     # Load Pretrained model and testing wav generation
     device = "cpu"#text2speech.device
     tts = Text2Speech.from_pretrained(
-        # model_file="./exp/tts_train_wlsc_wlsc_phn_none_student/latest.pth",
-        # train_config="./exp/tts_train_wlsc_wlsc_phn_none_student/inference.yaml",
-        model_file="./exp/tts_train_wlsc_wlsc_phn_none/latest.pth",
-        train_config="./exp/tts_train_wlsc_wlsc_phn_none/config.yaml",
+        model_file="./exp/tts_train_wlsc_wlsc_phn_none_student_ok/latest.pth",
+        train_config="./exp/tts_train_wlsc_wlsc_phn_none_student_ok/inference.yaml",
+        # model_file="./exp/tts_train_wlsc_wlsc_phn_none/latest.pth",
+        # train_config="./exp/tts_train_wlsc_wlsc_phn_none/config.yaml",
         vocoder_tag=None,
         device=device,
         num_speakers=9
@@ -93,9 +93,10 @@ if __name__ == "__main__":
         feats = torch.randn(150,20).to(device) # fake BFCCs
         feats_avg = torch.randn(7,20).to(device) # fake BFCCs
         sids = torch.tensor([3]).to(device) # speaker IDs
+        spembs = torch.randn(1,256)
 
         # plain method invocation to confirm that everything works correctly outside torch.jit.script
-        odict = model.export(text, sids=sids, phone_word_mappings=phone_word_mappings,feats_word_avg=feats_avg)
+        odict = model.export(text, sids=sids, phone_word_mappings=phone_word_mappings,feats_word_avg=feats_avg, spembs=spembs)
         
         odict[0].detach().numpy().tofile("/tmp/torch_bfccs")
 
@@ -103,7 +104,7 @@ if __name__ == "__main__":
         
         # odict["feat_gen"].detach().numpy().tofile("/tmp/torch_bfccs")
         
-        inputs = (text, sids,phone_word_mappings,feats_avg)
+        inputs = (text,sids,phone_word_mappings,feats_avg,spembs)
 
         model.forward = model.export
         
@@ -117,11 +118,11 @@ if __name__ == "__main__":
             inputs,
             'tts_model.onnx',
             export_params=True,
-            opset_version=14,
+            opset_version=13,
             do_constant_folding=False,
             verbose=True,
             input_names=[
-                'phones', 'speaker_id', 'phone_word_mappings','style_reference', 
+                'phones', 'speaker_id', 'phone_word_mappings','style_reference','spembs' 
             ],
             output_names=['pcm','durations'],
             dynamic_axes={
