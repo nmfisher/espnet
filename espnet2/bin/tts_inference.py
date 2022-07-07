@@ -160,6 +160,7 @@ class Text2Speech:
         speech: Union[torch.Tensor, np.ndarray] = None,
         durations: Union[torch.Tensor, np.ndarray] = None,
         phone_word_mappings:  Union[torch.Tensor, np.ndarray] = None,
+        feats_word_avg: Optional[torch.Tensor] = None,
         energy: Union[torch.Tensor, np.ndarray] = None,
         pitch: Union[torch.Tensor, np.ndarray] = None,
         spembs: Union[torch.Tensor, np.ndarray] = None,
@@ -199,6 +200,8 @@ class Text2Speech:
             batch.update(lids=lids)
         if phone_word_mappings is not None:
             batch.update(phone_word_mappings=phone_word_mappings)
+        if feats_word_avg is not None:
+            batch.update(feats_word_avg=feats_word_avg)    
         batch = to_device(batch, self.device)
 
         # overwrite the decode configs if provided
@@ -210,6 +213,57 @@ class Text2Speech:
         # inference
         if self.always_fix_seed:
             set_all_random_seed(self.seed)
+        import torch.nn.utils.prune as prune
+
+        # for i in range(len(self.model.tts.dec.encoders)):
+        #     # prune.random_unstructured(self.model.tts.dec.encoders[i].feed_forward.w_1, name="weight", amount=0.3)
+        #     # prune.random_unstructured(self.model.tts.dec.encoders[i].feed_forward.w_2, name="weight", amount=0.3)
+        #     prune.l1_unstructured(self.model.tts.dec.encoders[i].feed_forward.w_1, name="weight", amount=768)
+        #     prune.l1_unstructured(self.model.tts.dec.encoders[i].feed_forward.w_2, name="weight", amount=768)
+            
+        #     prune.remove(self.model.tts.dec.encoders[i].feed_forward.w_1, name="weight")
+        #     prune.remove(self.model.tts.dec.encoders[i].feed_forward.w_2, name="weight")
+        # params = (
+        #     (self.model.tts.enc.encoders[0].self_attn,'pos_bias_u'),
+        #     (self.model.tts.enc.encoders[0].self_attn, 'pos_bias_v'),
+        #     (self.model.tts.enc.encoders[0].self_attn.linear_q, 'weight'),
+        #     (self.model.tts.enc.encoders[0].self_attn.linear_q, 'bias'),
+        #     (self.model.tts.enc.encoders[0].self_attn.linear_k, 'weight'),
+        #     (self.model.tts.enc.encoders[0].self_attn.linear_k, 'bias'),
+        #     (self.model.tts.enc.encoders[0].self_attn.linear_v, 'weight'),
+        #     (self.model.tts.enc.encoders[0].self_attn.linear_v, 'bias'),
+        #     (self.model.tts.enc.encoders[0].self_attn.linear_out, 'weight'),
+        #     (self.model.tts.enc.encoders[0].self_attn.linear_out, 'bias'),
+        #     (self.model.tts.enc.encoders[0].self_attn.linear_pos, 'weight')
+        # )
+        # handled = []
+        # modules = [self.model.tts.dec]
+        # params = []
+        # while len(modules) > 0:
+        #     module = modules.pop()
+
+        #     if module in handled:
+        #         print(f"{name} already handled, skipping")
+        #         continue
+
+        #     if len(list(module.named_children())) == 0:
+        #         for name, param in module.named_parameters():
+        #             if name in ['bias']:
+        #                 params += [ (module, 'bias') ]
+        #             elif name in ['weight']:
+        #                 params += [ (module, 'weight') ]
+        #     else:
+        #         modules += list([child for name, child in module.named_children()])
+        #     handled += [ module ] 
+            
+        # if len(params) > 0:
+        #     print(f"Params for pruning : {params}")
+        #     # raise Exception()
+        #     prune.global_unstructured(
+        #         params,
+        #         pruning_method=prune.L1Unstructured,
+        #         amount=0.5,
+        #     )
         output_dict = self.model.inference(**batch, **cfg)
 
         # calculate additional metrics
@@ -456,11 +510,16 @@ def inference(
 
             start_time = time.perf_counter()
 
+            print(keys)
             
             output_dict = text2speech(**batch)
 
             key = keys[0]
+
+            
             insize = next(iter(batch.values())).size(0) + 1
+
+            
             
             if output_dict.get("feat_gen") is not None:
                 # standard text2mel model case
