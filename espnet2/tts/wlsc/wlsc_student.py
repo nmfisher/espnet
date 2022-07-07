@@ -235,7 +235,7 @@ class WLSCStudent(WLSC):
         teacher_ckpt = kwargs.pop("teacher_ckpt")
         teacher_conf = kwargs.pop("teacher_conf")
 
-        super().__init__(*args, **kwargs)
+        kwargs["proj_up_down"] =True
 
         from espnet2.bin.tts_inference import Text2Speech
 
@@ -246,12 +246,58 @@ class WLSCStudent(WLSC):
             device="cuda",
         ).model.tts
         teacher.eval()
-        sd = teacher.state_dict().copy()
+
+        super().__init__(*args, **kwargs)        
+
+        import torch.nn.utils.prune as prune
+        handled = []
+        modules = [teacher]
+        
+        while len(modules) > 0:
+            module = modules.pop()
+
+            if module in handled:
+                print(f"{name} already handled, skipping")
+                continue
+
+            if len(list(module.named_children())) == 0:
+                to_prune = []
+                for name, param in module.named_parameters():
+                    if name in ['bias']:
+                        to_prune += [ (module, 'bias')]
+                    elif name in ['weight']:
+                        to_prune += [(module, 'weight')]
+                if len(to_prune) > 0:
+                    prune.global_unstructured(
+                        to_prune,
+                        pruning_method=prune.L1Unstructured,
+                        amount=0.7,
+                    )
+                    print("Pruned")
+                    for module, param in to_prune:
+                        prune.remove(module, param)
+
+            else:
+                modules += list([child for name, child in module.named_children()])
+            handled += [ module ] 
+        
+        # if len(params) > 0:
+        #     print(f"Params for pruning : {params}")
+        #     # raise Exception()
+        #     prune.global_unstructured(
+        #         params,
+        #         pruning_method=prune.L1Unstructured,
+        #         amount=0.7,
+        #     )
+        #     for module, param in params:
+        #         prune.remove(module, param)
+
+        # sd = teacher.state_dict().copy()
         # for k,v in teacher.named_parameters():
         #     if k not in self.state_dict():
         #         print(f"Skipping key {k}")
         #         del sd[k]
-        #     elif "dec.encoders" in k and "feed_forward" in k:
+        #     elif "dec.encoders" in k or "dec.after_norm" in k or "feat_out" in k or "duration_predictor.conv.0" in k or "range_predictor.conv.0" in k: # and "feed_forward" in k:
         #         del sd[k]
         #         # sd[k] = torch.normal(0.0, 0.1, sd[k].size())
         # self.load_state_dict(sd, strict=False)
@@ -263,21 +309,18 @@ class WLSCStudent(WLSC):
 
         self.discriminator = GradientReversalLayer(Discriminator(self.odim))
 
-        self.iter = 0
+        self.iter = torch.tensor(0)
+        self.ratio = torch.tensor(0.0)
 
         # self.upsampled_proj = torch.nn.Linear(self.decoder_adim, self.teacher.decoder_adim)
-        # self.upsampled_proj_var = torch.nn.Sequential(
-        #     torch.nn.Linear(self.decoder_adim, self.teacher.decoder_adim),
-        #     torch.nn.ReLU())
         # self.upsampled_proj_down = torch.nn.Linear(self.teacher.decoder_adim, self.decoder_adim)
-            
-
-        # self.dec_proj = torch.nn.Linear(self.decoder_adim, self.teacher.decoder_adim)
+        
         # self.dec_proj_var = torch.nn.Sequential(
         #     torch.nn.Linear(self.decoder_adim, self.teacher.decoder_adim),
         #     torch.nn.ReLU())
         # self.dec_proj_down = torch.nn.Linear(self.teacher.decoder_adim, self.decoder_adim)
-    
+
+   
     def forward(
         self,
         text: torch.Tensor,
@@ -294,7 +337,8 @@ class WLSCStudent(WLSC):
         pitch_lengths:torch.Tensor,
         energy:torch.Tensor,
         energy_lengths:torch.Tensor,
-        sids: torch.Tensor
+        sids: torch.Tensor,
+        spembs: torch.Tensor,
     ) -> torch.Tensor:
         """Calculate forward propagation. 
         Since torch.jit.script is used to export the model, this method handles both training and inference.
@@ -312,6 +356,7 @@ class WLSCStudent(WLSC):
 
         """
         self.iter += 1
+        
         batch_size = text.size(0)
         text = text[:, : text_lengths.max()]  # for data-parallel
         feats = feats[:, : feats_lengths.max()]  # for data-parallel
@@ -323,61 +368,72 @@ class WLSCStudent(WLSC):
 
         d_masks = make_pad_mask(ilens).to(text.device)
 
+        # with torch.no_grad():
+
         # encode phone sequence
         phone_enc_s, _ = self.enc(text, d_masks.unsqueeze(1))
+        # phone_enc_s_proj_up = self.enc_proj_up(phone_enc_s)
+        # phone_enc_s = self.enc_proj_down(phone_enc_s_proj_up)
         
         # if self.iter <= 3000 or (self.iter >= 9000 and self.iter <= 12000):
         # if self.iter % 2 == 1:
         # phone_enc_s = phone_enc_s.detach()
 
-        with torch.no_grad():
-            phone_enc_t, _ = self.teacher.enc(text, d_masks.unsqueeze(1))
-            # embed speaker
-            spembs_s = self.spk_embed(sids)
-            spembs_t = self.teacher.spk_embed(sids)
         
-            # encode style
-            word_style_enc_s = self.word_style_encoder(feats_word_avg)
-            word_style_enc_t = self.teacher.word_style_encoder(feats_word_avg)
+        phone_enc_t, _ = self.teacher.enc(text, d_masks.unsqueeze(1))
+        # embed speaker
+        spembs_s = spembs # self.spk_embed(sids)
+        spembs_t = spembs # self.teacher.spk_embed(sids)
+    
+        # encode style
+        word_style_enc_s = self.word_style_encoder(feats_word_avg)
+        word_style_enc_t = self.teacher.word_style_encoder(feats_word_avg)
 
-            spk_class = self.speaker_classifier(word_style_enc_s)
+        # spk_class = self.speaker_classifier(word_style_enc_s)
+        word_masks = make_pad_mask(feats_word_avg_lengths).to(text.device)
 
-            # linear project
-            phone_enc_proj_s = self.word_seq_proj(phone_enc_s)
-            phone_enc_proj_t = self.teacher.word_seq_proj(phone_enc_t)
+        spk_emb_preds = self.gradient_reversal_layer(self.speaker_emb_predictor(word_style_enc_s, word_masks.unsqueeze(2)))
 
-            # average by word boundaries
-            phone_enc_averaged_s = self.average(phone_enc_proj_s, phone_word_mappings, d_masks)
-            phone_enc_averaged_t = self.teacher.average(phone_enc_proj_t, phone_word_mappings, d_masks)
+        # linear project
+        phone_enc_proj_s = self.word_seq_proj(phone_enc_s)
+        phone_enc_proj_t = self.teacher.word_seq_proj(phone_enc_t)
 
-            word_enc_out_s, _ = self.word_seq_enc(phone_enc_averaged_s.detach())
-            word_enc_out_t, _ = self.teacher.word_seq_enc(phone_enc_averaged_t.detach())
+        # average by word boundaries
+        phone_enc_averaged_s = self.average(phone_enc_proj_s, phone_word_mappings, d_masks)
+        phone_enc_averaged_t = self.teacher.average(phone_enc_proj_t, phone_word_mappings, d_masks)
 
-            prior_out = self.prior(phone_enc_averaged_s.detach(), word_enc_out_s.detach())  
+        word_enc_out_s, _ = self.word_seq_enc(phone_enc_averaged_s.detach())
+        word_enc_out_t, _ = self.teacher.word_seq_enc(phone_enc_averaged_t.detach())
 
-            concatenated_s = self.concatenate(word_enc_out_s, phone_enc_proj_s, phone_word_mappings, word_style_enc_s,spembs_s)
-            concatenated_t = self.teacher.concatenate(word_enc_out_t, phone_enc_proj_t, phone_word_mappings, word_style_enc_t,spembs_t)
+        prior_out = self.prior(phone_enc_averaged_s.detach(), word_enc_out_s.detach())  
 
-            # predict durations & ranges        
-            d_outs_s = self.duration_predictor(concatenated_s, d_masks)
-            r_outs_s = self.range_predictor(concatenated_s, d_masks)
+        concatenated_s = self.concatenate(word_enc_out_s, phone_enc_proj_s, phone_word_mappings, word_style_enc_s,spembs_s)
+        concatenated_t = self.teacher.concatenate(word_enc_out_t, phone_enc_proj_t, phone_word_mappings, word_style_enc_t,spembs_t)
 
-            d_outs_t = self.teacher.duration_predictor(concatenated_t, d_masks)
-            r_outs_t = self.teacher.range_predictor(concatenated_t, d_masks)
+        # raise Exception(concatenated_s.size())
 
-            # apply Gaussian upsampling
-            upsampled_s = self.length_regulator(concatenated_s, r_outs_s, durations)  # (B, T_feats, adim)
-            upsampled_t = self.teacher.length_regulator(concatenated_t, r_outs_t, durations)  # (B, T_feats, adim)
+        # predict durations & ranges        
+        d_outs_s = self.duration_predictor(concatenated_s, d_masks)
+        r_outs_s = self.range_predictor(concatenated_s, d_masks)
 
-            # forward decoder
-        
-            h_masks = self._source_mask(feats_lengths)
-        
-            zs_t, _ = self.teacher.dec(upsampled_t.detach(), h_masks)  # (B, T_feats, adim)
+        d_outs_t = self.teacher.duration_predictor(concatenated_t, d_masks)
+        r_outs_t = self.teacher.range_predictor(concatenated_t, d_masks)
 
+        # apply Gaussian upsampling
+        upsampled_s = self.length_regulator(concatenated_s, r_outs_s, durations)  # (B, T_feats, adim)
+        upsampled_t = self.teacher.length_regulator(concatenated_t, r_outs_t, durations)  # (B, T_feats, adim)
+
+        # forward decoder
+    
+        h_masks = self._source_mask(feats_lengths)
+    
+        zs_t, _ = self.teacher.dec(upsampled_t.detach(), h_masks)  # (B, T_feats, adim)
+    
         # if self.iter <= 3000 or (self.iter >= 9000 and self.iter <= 12000):
         # if self.iter % 2 == 1:
-            zs_s, _ = self.dec(upsampled_t.detach(), h_masks)  # (B, T_feats, adim)    
+        zs_s, _ = self.dec(upsampled_s, h_masks)  # (B, T_feats, adim)    
+        # zs_s_proj_up = self.dec_proj_up(zs_s)
+        # zs_s =self.dec_proj_down(zs_s_proj_up)
         # else:
         # elif self.iter <= 6000 or (self.iter >= 12000 and self.iter <= 15000):
             # with torch.no_grad():
@@ -385,65 +441,89 @@ class WLSCStudent(WLSC):
         # else:
             # zs_s, _ = self.dec(upsampled_s.detach(), h_masks)  # (B, T_feats, adim)
 
-            before_outs_s = self.feat_out(zs_s).view(
-                zs_s.size(0), -1, self.odim
-            )  # (B, T_feats, odim)
+        before_outs_s = self.feat_out(zs_s).view(
+            zs_s.size(0), -1, self.odim
+        )  # (B, T_feats, odim)
 
-            before_outs_t = self.teacher.feat_out(zs_t).view(
-                zs_s.size(0), -1, self.odim
-            )  # (B, T_feats, odim)
+        after_outs_s = before_outs_s + self.postnet(
+            before_outs_s.transpose(1, 2)
+        ).transpose(1, 2)
 
-        # after_outs_t = before_outs_t + self.teacher.postnet(
-        #     before_outs_t.transpose(1, 2)
-        # ).transpose(1, 2)
+        before_outs_t = self.teacher.feat_out(zs_t).view(
+            zs_s.size(0), -1, self.odim
+        )  # (B, T_feats, odim)
 
-        # student_class, teacher_class = self.discriminator(before_outs_s, after_outs_t.detach(), feats_lengths)
+        after_outs_t = before_outs_t + self.teacher.postnet(
+            before_outs_t.transpose(1, 2)
+        ).transpose(1, 2)
 
-        # student_loss = torch.nn.functional.cross_entropy(student_class, torch.tensor([[1.0,0.0]]).to(after_outs_t.device).expand(student_class.size()))
-        # teacher_loss = torch.nn.functional.cross_entropy(teacher_class, torch.tensor([[0.0,1.0]]).to(after_outs_t.device).expand(teacher_class.size()))
 
         out_masks = make_non_pad_mask(feats_lengths).unsqueeze(-1).to(feats.device)
-        zs_s = zs_s.masked_select(out_masks)
-        zs_t = zs_t.masked_select(out_masks)
+        
         pmasks = make_non_pad_mask(text_lengths).unsqueeze(-1).to(feats.device)
-        phone_enc_s = phone_enc_s.masked_select(pmasks)
-        phone_enc_t = phone_enc_t.masked_select(pmasks)
 
         # before_outs_s = before_outs_s.masked_select(out_masks)
+
+        student_class, teacher_class = self.discriminator(after_outs_s, after_outs_t.detach(), feats_lengths)
+
+        student_loss = torch.nn.functional.cross_entropy(student_class, torch.tensor([[1.0,0.0]]).to(after_outs_t.device).expand(student_class.size()))
+        teacher_loss = torch.nn.functional.cross_entropy(teacher_class, torch.tensor([[0.0,1.0]]).to(after_outs_t.device).expand(teacher_class.size()))
+
+        if self.iter % 200 == 0:
+            self.ratio -= 0.01
+            if self.ratio < 0:
+                self.ratio = torch.tensor(0.0)
+            print(self.ratio)
+        feat_weight_mask = torch.ones(20).to(feats.device)
+        # feat_weight_mask[0]=0.1
+        # feat_weight_mask[1]=0.1
+        # feat_weight_mask[2]=0.5
+        # feat_weight_mask[3]=0.5
+
+        # raise Exception(after_outs_s* feat_weight_mask)
+        
         # feats = feats.masked_select(out_masks)
         l1_loss, duration_loss, prior_loss, spk_loss = self.criterion(
-            after_outs=before_outs_s,
-            before_outs=before_outs_s,
+            after_outs=after_outs_s* feat_weight_mask,
+            before_outs=before_outs_s* feat_weight_mask,
             word_style_enc=word_style_enc_s,
             prior_out=prior_out,
             d_outs=d_outs_s,
-            ys=feats,
+            ys=feats * feat_weight_mask,
             ds=durations,
             ilens=ilens,
             olens=feats_lengths,
-            sids=sids,spk_class=spk_class,
+            sids=sids,
+            # spk_class=spk_class,
+            spk_emb_preds=spk_emb_preds,
+            spk_embs=spembs
         )
-        # loss = duration_loss + l1_loss + prior_loss + spk_loss
-        dec_loss = F.mse_loss(zs_s, zs_t)
-        enc_loss = F.mse_loss(phone_enc_s, phone_enc_t)
+        #dec_loss = F.mse_loss(zs_s_proj_up.masked_select(out_masks), zs_t.masked_select(out_masks))
+        #enc_loss = F.mse_loss(phone_enc_s_proj_up.masked_select(pmasks), phone_enc_t.masked_select(pmasks))
         # c_loss = F.mse_loss(concatenated_s, concatenated_t)
         # if self.iter <= 3000 or (self.iter >= 9000 and self.iter <= 12000):
         # if self.iter % 2 == 1:
         # loss = dec_loss + l1_loss 
         # else:
         # elif self.iter <= 6000 or (self.iter >= 12000 and self.iter <= 15000):
-        loss = l1_loss + enc_loss
-        # else:
-        #     loss = dec_loss + l1_loss + enc_loss
+        # if self.iter
+        error_loss = F.mse_loss(after_outs_s.masked_select(out_masks), feats.masked_select(out_masks) - (self.ratio.item() * after_outs_t.masked_select(out_masks)))
+        loss = l1_loss + duration_loss + prior_loss + spk_loss + (0.1 * (student_loss + teacher_loss)) #+ error_loss
+
+        loss = l1_loss
 
         stats = dict(
             l1_loss=l1_loss.item(),
             duration_loss=duration_loss.item(),
             prior_loss=prior_loss.item(),
             spk_loss=spk_loss.item(),
-            enc_loss=enc_loss.item(),
+            #enc_loss=enc_loss.item(),
             # c_loss=c_loss.item()
-            dec_loss=dec_loss.item()
+            #dec_loss=dec_loss.item()
+            student_loss=student_loss.item(),
+            teacher_loss=teacher_loss.item(),
+            error_loss=error_loss.item(),
+            ratio=self.ratio.item()
         )
         # l1_loss = torch.nn.functional.smooth_l1_loss(before_outs_s, feats)
         # loss = l1_loss
@@ -664,9 +744,10 @@ class WLSCStudent(WLSC):
         text: torch.Tensor,
         sids:torch.Tensor,
         phone_word_mappings:torch.Tensor,
-        feats_word_avg: torch.Tensor 
+        feats_word_avg: torch.Tensor,
+        spembs: torch.Tensor,
     ) -> Tuple[torch.Tensor,torch.Tensor,torch.Tensor]:
-        return self._inference(text, sids=sids,phone_word_mappings=phone_word_mappings,feats_word_avg=feats_word_avg)     
+        return self._inference(text, sids=sids,phone_word_mappings=phone_word_mappings,feats_word_avg=feats_word_avg, spembs=spembs)     
 
     
     @property
