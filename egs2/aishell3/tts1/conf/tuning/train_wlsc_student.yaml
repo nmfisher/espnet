@@ -16,12 +16,13 @@
 tts: wlsc_student      # model architecture
 tts_conf:             # keyword arguments for the selected model
     # spk_embed_dim: 128
-    # phone_embed_dim: 128
-    # word_seq_embed_dim: 128
-    # word_seq_proj_dim: 128
-    # style_token_dim: 128
+    phone_embed_dim: 72
+    word_seq_embed_dim: 72
+    word_seq_proj_dim: 72
+    style_token_dim: 72
     # word_seq_encoder_dropout: 0.0
-    # encoder_adim: 128
+    encoder_adim: 72
+    encoder_linear_units: 128
     # encoder_aheads: 2
     encoder_numblocks: 1
     encoder_dropout_rate: 0.0
@@ -31,15 +32,18 @@ tts_conf:             # keyword arguments for the selected model
     # encoder_positionwise_layer_type: "linear"
     # encoder_use_cnn_module: true
     # style_encoder_aheads: 2
-    # decoder_adim: 512
-    # decoder_aheads: 2
+    decoder_adim: 472
+    decoder_aheads: 4
     decoder_numblocks: 3
-    decoder_positionwise_layer_type: "linear"
-    decoder_use_cnn_module: true
+    decoder_positionwise_layer_type: "conv1d-linear"
+    decoder_positionwise_conv_kernel_size: 7
+    decoder_use_cnn_module: false
     decoder_dropout_rate: 0.1
     decoder_positional_dropout_rate: 0.1
     decoder_attention_dropout_rate: 0.1
-    decoder_conv_kernel_size: 27
+    #decoder_conv_kernel_size: 5
+    # decoder_cnn_module_kernel: 21
+    decoder_linear_units: 1024
     # prior_layers: 1
     # duration_predictor_layers: 1
     # duration_predictor_chans: 128
