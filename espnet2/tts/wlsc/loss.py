@@ -53,9 +53,9 @@ class WLSCLoss(torch.nn.Module):
         prior_out: torch.Tensor,
         word_style_enc: torch.Tensor,
         sids: torch.Tensor,
-        spk_class: torch.Tensor,
-        #spk_preds: torch.Tensor,
-        #spk_embs: torch.Tensor,
+        # spk_class: torch.Tensor,
+        spk_emb_preds: torch.Tensor,
+        spk_embs: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Calculate forward propagation.
 
@@ -88,8 +88,8 @@ class WLSCLoss(torch.nn.Module):
             d_outs = d_outs.masked_select(duration_masks)
             ds = ds.masked_select(duration_masks)
         
-        spk_loss = torch.nn.functional.cross_entropy(spk_class, sids.squeeze(1))
-        # spk_loss = torch.nn.functional.mse_loss(spk_preds, spk_embs)
+        # spk_loss = torch.nn.functional.cross_entropy(spk_class, sids.squeeze(1))
+        spk_loss = torch.nn.functional.mse_loss(spk_emb_preds, spk_embs.squeeze(1))
 
         # calculate loss
         l1_loss = self.l1_criterion(before_outs, ys)
