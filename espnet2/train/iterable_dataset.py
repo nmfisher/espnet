@@ -188,7 +188,7 @@ class IterableESPnetDataset(IterableDataset):
                     if k != keys[0]:
                         raise RuntimeError(
                             f"Keys are mismatched. Text files (idx={k_idx}) is "
-                            f"not sorted or not having same keys at L{linenum}"
+                            f"not sorted or not having same keys at L{linenum} in files {files}"
                         )
 
                 # If the key is matched, break the loop
