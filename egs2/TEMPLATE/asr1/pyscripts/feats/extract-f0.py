@@ -94,7 +94,7 @@ def extract(wavs, durations, transcripts, sample_rate, hop_length):
           print(transcript)
           raise Exception(f"Number of phone frame durations {len(utt_durations)} does not match number of phones in transcript {len(transcript)} for utt {utt_id}, do the wav.scp/text/durations files all match exactly?")
 
-        utt_durations = [ float(x) for x in utt_durations ]
+        utt_durations = [ int(x) for x in utt_durations ]
 
         wav, rate = librosa.load(path[0], sr=sample_rate)
         frames_per_second = sample_rate / hop_length
