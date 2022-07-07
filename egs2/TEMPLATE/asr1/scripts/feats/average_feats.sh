@@ -87,7 +87,7 @@ for n in $(seq ${nj}); do
     cat ${logdir}/word_phone_mappings.$n.scp || exit 1;
 done > ${data}/word_phone_mappings.scp || exit 1
 
-rm -f ${logdir}/feats.*.scp ${logdir}/durations.* ${logdir}/pitch.* ${logdir}/text.* 2>/dev/null
+rm -f ${logdir}/feats.*.scp ${logdir}/durations.* ${logdir}/pitch.* ${logdir}/text.* ${logdir}/word_phone_mappings.* 2>/dev/null
 
 nf=$(wc -l < ${data}/feats_word_avg.scp)
 nu=$(wc -l < ${data}/wav.scp)
