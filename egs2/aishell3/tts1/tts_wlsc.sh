@@ -316,7 +316,7 @@ if ! "${skip_data_prep}"; then
         # If nothing is need, then format_wav_scp.sh does nothing:
         # i.e. the input file format and rate is same as the output.
 
-        log "Stage 2: Format wav.scp: data/ -> ${data_feats}/"
+        # log "Stage 2: Format wav.scp: data/ -> ${data_feats}/"
         for dset in "${train_set}" "${valid_set}" ${test_sets}; do
             if [ "${dset}" = "${train_set}" ] || [ "${dset}" = "${valid_set}" ]; then
                 _suf="/org"
@@ -340,12 +340,8 @@ if ! "${skip_data_prep}"; then
         if "${use_xvector}"; then
             log "Stage 2+: Extract X-vector: data/ -> ${dumpdir}/xvector (Require Kaldi)"
             mkdir -p ${dumpdir}/xvector/${train_set} ${dumpdir}/xvector/${valid_set}
-            ./scripts/feats/extract_spkembs.sh \
-                ${data_feats}${_suf}/${train_set}/wav.scp \
-                ${data_feats}${_suf}/${valid_set}/wav.scp \
-                "ark,scp:${data_feats}${_suf}/${train_set}/xvector.ark,${data_feats}${_suf}/${train_set}/xvector.scp" \
-                "ark,scp:${data_feats}${_suf}/${valid_set}/xvector.ark,${data_feats}${_suf}/${valid_set}/xvector.scp" \
-                ${dumpdir}/xvector/xvector_stats
+            ./scripts/feats/extract_spkembs.sh --nj ${_nj} ${data_feats}${_suf}/${train_set}/wav.scp
+            ./scripts/feats/extract_spkembs.sh --nj ${_nj} ${data_feats}${_suf}/${valid_set}/wav.scp 
         fi
 
         # Prepare spk id input
@@ -455,12 +451,12 @@ else
     log "Skip the stages for data preparation"
 fi
 # ========================== Data preparation is done here. ==========================
-if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
+if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
   ./scripts/feats/make_bfcc.sh --nj "${_nj}" ${data_feats}/${train_set} || exit -1;
   ./scripts/feats/make_bfcc.sh --nj "${_nj}" ${data_feats}/${valid_set} || exit -1;
 fi
 
-if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
+if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
             _teacher_train_dir="${teacher_dumpdir}/${train_set}"
             _teacher_valid_dir="${teacher_dumpdir}/${valid_set}"
 
@@ -1096,6 +1092,7 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
             fi
             
             _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/phone_word_mappings,phone_word_mappings,text_int   " \
+            _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " \
 
             # Add X-vector to the inputs if needed
             if "${use_xvector}"; then
