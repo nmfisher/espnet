@@ -22,9 +22,6 @@ from espnet2.utils.types import str_or_none
 
 import torch.nn.functional as F
 
-class FooModel(torch.nn.Module):
-    def forward(self, x):
-        return x, x
 def get_parser():
     parser = argparse.ArgumentParser(
         description="",
@@ -32,28 +29,8 @@ def get_parser():
     )
     return parser
 
-if __name__ == "__main__":
-    # Logger
-    parser = get_parser()
-    args = parser.parse_args()
-
-    # Load Pretrained model and testing wav generation
-    device = "cpu"#text2speech.device
-    tts = Text2Speech.from_pretrained(
-        model_file="./exp/tts_train_wlsc_wlsc_phn_none_student_ok/latest.pth",
-        train_config="./exp/tts_train_wlsc_wlsc_phn_none_student_ok/inference.yaml",
-        # model_file="./exp/tts_train_wlsc_wlsc_phn_none/latest.pth",
-        # train_config="./exp/tts_train_wlsc_wlsc_phn_none/config.yaml",
-        vocoder_tag=None,
-        device=device,
-        num_speakers=9
-    )
-
-    # # Prepare modules for conversion
-    # logging.info("Generate ONNX models")
-    with torch.no_grad():
-        
-        model = tts.model.tts
+def prune(model):
+    return model #TODO
     #     import torch.nn.utils.prune as prune
     #     handled = []
     #     modules = [model]
@@ -85,24 +62,56 @@ if __name__ == "__main__":
     #         )
     #         for module, param in params:
     #             prune.remove(module, param)
+
+if __name__ == "__main__":
+    # Logger
+    parser = get_parser()
+
+    parser.add_argument(
+        "model", type=str, help="Path to checkpoint .pth file")
+
+    parser.add_argument(
+        "config", type=str, help="Path to config .yaml")
+
+    parser.add_argument(
+        "output", type=str, help="Path to output .onnx file"
+    )
+
+    parser.add_argument(
+        "--prune", help="Whether or not to prune the model", action="store_true"
+    )
+
+    args = parser.parse_args()
+
+    if args.model is None or args.config is None or args.output is None:
+        sys.exit()
+
+    # Load Pretrained model and testing wav generation
+    device = "cpu"
+    tts = Text2Speech.from_pretrained(
+        model_file=args.model, # "./exp/tts_train_wlsc_wlsc_phn_none_student_ok/latest.pth",
+        train_config=args.config, # "./exp/tts_train_wlsc_wlsc_phn_none_student_ok/inference.yaml",
+        vocoder_tag=None,
+        device=device,
+        num_speakers=9
+    )
+
+    # # Prepare modules for conversion
+    with torch.no_grad():
+        
+        model = tts.model.tts
+        if args.prune:
+            model = prune(model)
         
         model.eval()
-        #import numpy as np
-        text = torch.tensor([154,  22,  80,  19,  69,  18,  57,  32, 132,  71,  68,  14,  97, 154],dtype=torch.int).to(device)
-        phone_word_mappings = torch.tensor([0, 1, 1, 2, 2, 3, 3, 4, 4, 4, 4, 5, 5, 6])
-        feats = torch.randn(150,20).to(device) # fake BFCCs
-        feats_avg = torch.randn(7,20).to(device) # fake BFCCs
+        text = torch.tensor([45, 34, 34, 34, 34, 101],dtype=torch.long).to(device)
+        phone_word_mappings = torch.tensor([0,0,0,1,1,1])
+        feats_avg = torch.randn(2,20).to(device) # fake BFCCs
         sids = torch.tensor([3]).to(device) # speaker IDs
         spembs = torch.randn(1,256)
 
         # plain method invocation to confirm that everything works correctly outside torch.jit.script
         odict = model.export(text, sids=sids, phone_word_mappings=phone_word_mappings,feats_word_avg=feats_avg, spembs=spembs)
-        
-        odict[0].detach().numpy().tofile("/tmp/torch_bfccs")
-
-        print(odict[0])
-        
-        # odict["feat_gen"].detach().numpy().tofile("/tmp/torch_bfccs")
         
         inputs = (text,sids,phone_word_mappings,feats_avg,spembs)
 
@@ -114,9 +123,8 @@ if __name__ == "__main__":
         # export
         torch.onnx.export(
             scripted_module,
-            #model,
             inputs,
-            'tts_model.onnx',
+            args.output,
             export_params=True,
             opset_version=13,
             do_constant_folding=False,
@@ -145,12 +153,4 @@ if __name__ == "__main__":
         )
     print("Done!")
 
-        # with open("/tmp/tmp.feats.txt") as infile:
-        #     lines = infile.readlines()
-        #     data =[]
-        #     for line in lines[1:]:
-        #         line = line.strip().split(" ")
-        #         line = [l for l in line  if len(l) > 0 and l != "]"]
-        #         data += [[float(x) for x in line]]
-        # feats = np.fromfile("exp/tts_train_gst+xvector_conformer_fastspeech2_bfcc_phn_none/inference_train.loss.best/test/log/output.28/norm/zhCNXiaoyouNeural-d270e74e19ca5b9a8ff86f4d80214dfa_duration_1.1.npy",dtype=np.float32).reshape(-1,20)
-        # feats = torch.tensor(feats).to(device)
+        
