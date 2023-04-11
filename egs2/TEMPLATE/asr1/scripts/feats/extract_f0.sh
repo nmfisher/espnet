@@ -9,10 +9,12 @@ preprocess_conf=""
 # End configuration section.
 
 help_message=$(cat << EOF
-Usage: $0 [options] <train-wav> <train-durations> <train-transcript> <valid-wav> <valid-durations> <valid-transcript> <f0min> <f0max>  [<log-dir>]
-e.g.: $0 data/train/wav.scp teacher_train_dir/durations data/train/text data/test/wav.scp teacher_valid_dir/durations data/valid/text data/train/log
-assuming data/train/text contains the phonetic transcript like:
-SPKR1_UTT1 h eh l l o
+Usage: $0 [options] <data_dir> <f0min> <f0max> 
+e.g.: $0 data/train 80 8000 
+data_dir must contain:
+- wav.scp
+- text
+
 
 Options:
   --nj <nj>                                        # number of parallel jobs
@@ -32,18 +34,19 @@ fi
 
 set -euo pipefail
 
-wav=$1
-durations=$2
-transcript=$3
-pitch_out=$4
-energy_out=$5
-f0min=${6}
-f0max=${7}
-dump_dir=${8}
+dir=$1
+f0min=${2}
+f0max=${3}
 
-data=$(dirname ${durations})
-logdir=${data}/log
+wav=$dir/wav.scp
+durations=$dir/durations
+transcript=$dir/text
+pitch_out=$dir/pitch
+energy_out=$dir/energy
+
+logdir=$dir/log
 mkdir -p ${logdir}
+dump_dir=$logdir
 
 sr=16000
 hop_length=160
@@ -61,18 +64,18 @@ for n in $(seq ${nj}); do
   ./utils/filter_scp.pl ${logdir}/wav.${n}.scp  ${transcript} > ${logdir}/transcript.$n
 done
 
-echo "Extracting F0 using durations at ${durations}, pitch/energy will be written to $pitch_out and $energy_out"
+echo "Extracting F0 using durations at ${durations}, pitch/energy will be written to ${pitch_out}.scp and ${energy_out}.scp"
 ${cmd} JOB=1:${nj} ${logdir}/extract_f0.JOB.log \
     pyscripts/feats/extract-f0.py ${sr} ${hop_length}  \
     ${logdir}/wav.JOB.scp ${logdir}/durations.JOB ${logdir}/transcript.JOB ${logdir}/pitch.JOB ${logdir}/energy.JOB \
     ${f0min} ${f0max} ${dump_dir}
+echo "done!"
+for n in $(seq ${nj}); do
+    cat ${logdir}/pitch.$n.scp || exit 1;
+done > ${pitch_out}.scp || exit 1
 
 for n in $(seq ${nj}); do
-    cat ${logdir}/pitch.$n || exit 1;
-done > ${pitch_out} || exit 1
+    cat ${logdir}/energy.$n.scp || exit 1;
+done > ${energy_out}.scp || exit 1
 
-for n in $(seq ${nj}); do
-    cat ${logdir}/energy.$n || exit 1;
-done > ${energy_out} || exit 1
-
-rm -f ${logdir}/wav.*.scp ${logdir}/durations.* ${logdir}/transcript.* ${logdir}/pitch.* ${logdir}/energy.*
+# rm -f ${logdir}/wav.*.scp ${logdir}/durations.* ${logdir}/transcript.* ${logdir}/pitch.*.scp ${logdir}/energy.*.scp

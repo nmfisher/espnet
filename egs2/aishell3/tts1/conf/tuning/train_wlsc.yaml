@@ -15,7 +15,34 @@
 ##########################################################
 tts: wlsc      # model architecture
 tts_conf:             # keyword arguments for the selected model
-
+    spk_embed_dim: 24
+    phone_embed_dim: 128
+    #word_seq_embed_dim: 72
+    # word_seq_proj_dim: 72
+    # style_token_dim: 72
+    # word_seq_encoder_dropout: 0.0
+    encoder_adim: 128
+    encoder_linear_units: 128
+    encoder_aheads: 2
+    encoder_numblocks: 1
+    encoder_dropout_rate: 0.0
+    encoder_positional_dropout_rate: 0.1
+    encoder_attention_dropout_rate: 0.1
+    # encoder_conv_kernel_size: 5
+    # encoder_positionwise_layer_type: "linear"
+    # encoder_use_cnn_module: true
+    # style_encoder_aheads: 2
+    decoder_adim: 128
+    decoder_aheads: 4
+    decoder_numblocks: 3
+    decoder_positionwise_layer_type: "conv1d-linear"
+    decoder_positionwise_conv_kernel_size: 7
+    decoder_use_cnn_module: false
+    decoder_dropout_rate: 0.1
+    decoder_positional_dropout_rate: 0.1
+    decoder_attention_dropout_rate: 0.1
+    decoder_cnn_module_kernel: 21
+    decoder_linear_units: 1024
 # extra module for additional inputs
 #pitch_extract: dio           # pitch extractor type
 #pitch_normalize: global_mvn  # normalizer for the pitch feature
@@ -42,6 +69,7 @@ grad_clip: 1.0            # gradient clipping norm
 grad_noise: false         # whether to use gradient noise injection
 accum_grad: 1             # gradient accumulation
 # batch_bins: 1800000      # batch bins (feats_type=raw)
+num_prosody_clusters: 5
 batch_bins: 17500      # batch bins (feats_type=raw)
 batch_type: numel         # how to make batch
 sort_in_batch: descending # how to sort data in making batch

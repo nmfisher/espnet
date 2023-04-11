@@ -100,20 +100,36 @@ if __name__ == "__main__":
     with torch.no_grad():
         
         model = tts.model.tts
-        if args.prune:
-            model = prune(model)
+        # if args.prune:
+        #     model = prune(model)
         
         model.eval()
-        text = torch.tensor([45, 34, 34, 34, 34, 101],dtype=torch.long).to(device)
-        phone_word_mappings = torch.tensor([0,0,0,1,1,1])
-        feats_avg = torch.randn(2,20).to(device) # fake BFCCs
-        sids = torch.tensor([3]).to(device) # speaker IDs
-        spembs = torch.randn(1,256)
+        text = torch.tensor([0, 0, 0, 0, 0, 0],dtype=torch.long).to(device)
+        # pitch = torch.tensor([4, 4, 4, 4, 4, 4],dtype=torch.long).to(device)
+        # energy = torch.tensor([4, 4, 4, 4, 4, 4],dtype=torch.long).to(device)
+        # phone_word_mappings = torch.tensor([0,0,0,1,1,1])
+        # feats_avg = torch.randn(2,20).to(device) # fake BFCCs
+        sids = torch.tensor([0]).to(device) # speaker IDs
+        # spembs = torch.randn(1,256)
 
         # plain method invocation to confirm that everything works correctly outside torch.jit.script
-        odict = model.export(text, sids=sids, phone_word_mappings=phone_word_mappings,feats_word_avg=feats_avg, spembs=spembs)
+        odict = model.export(
+                                text, 
+                                sids=sids, 
+                                #pitch=pitch,
+                                #energy=energy
+                                #phone_word_mappings=None,#phone_word_mappings,
+                                #feats_word_avg=None,# feats_avg, 
+                                #spembs=None#spembs
+                            )
         
-        inputs = (text,sids,phone_word_mappings,feats_avg,spembs)
+        inputs = (
+            text,
+            sids,
+            #pitch, energy
+            # phone_word_mappings,
+            # feats_avg,spembs
+        )
 
         model.forward = model.export
         
@@ -130,19 +146,25 @@ if __name__ == "__main__":
             do_constant_folding=False,
             verbose=True,
             input_names=[
-                'phones', 'speaker_id', 'phone_word_mappings','style_reference','spembs' 
+                'phones', 'speaker_id',  #'pitch', 'energy',# 'phone_word_mappings','style_reference','spembs' 
             ],
             output_names=['pcm','durations'],
             dynamic_axes={
                 'phones': {
                     0: 'length'
                 },
-                'style_reference': {
+                'pitch': {
                     0: 'length'
                 },
-                'phone_word_mappings':{
-                    0: 'num_phones'
+                'energy':{
+                    0: 'length'
                 },
+                # 'style_reference': {
+                #     0: 'length'
+                # },
+                # 'phone_word_mappings':{
+                #     0: 'num_phones'
+                # },
                 'pcm': {
                     0: 'olen', 
                 },

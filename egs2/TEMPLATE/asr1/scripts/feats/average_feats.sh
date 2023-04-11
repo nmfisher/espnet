@@ -64,19 +64,16 @@ feats=${data}/feats.scp
 
 utils/split_scp.pl ${feats} ${split_scps} || exit 1;
 
-pitch=${data}/pitch
 durations=${data}/durations
 text=${data}/text
 
 for n in $(seq ${nj}); do
   ./utils/filter_scp.pl ${logdir}/feats.${n}.scp  ${durations}  > ${logdir}/durations.$n
-  ./utils/filter_scp.pl ${logdir}/feats.${n}.scp  ${pitch} > ${logdir}/pitch.$n
   ./utils/filter_scp.pl ${logdir}/feats.${n}.scp  ${text} > ${logdir}/text.$n
-  ./utils/filter_scp.pl ${logdir}/feats.${n}.scp  ${data}/phone_word_mappings > ${logdir}/phone_word_mappings.$n
-  
+  ./utils/filter_scp.pl ${logdir}/feats.${n}.scp  ${data}/phone_word_mappings > ${logdir}/phone_word_mappings.$n  
 done
 
-${cmd} JOB=1:${nj} ${logdir}/avg_bfcc_${name}.JOB.log pyscripts/feats/average-word.py ${logdir}/feats.JOB.scp ${logdir}/pitch.JOB ${logdir}/durations.JOB ${logdir}/text.JOB ark,scp:${bfccdir}/avg_bfcc_${name}.JOB.ark,${bfccdir}/avg_bfcc_${name}.JOB.scp ${logdir}/phone_word_mappings.JOB ark,scp:${logdir}/word_phone_mappings.JOB.ark,${logdir}/word_phone_mappings.JOB.scp 
+${cmd} JOB=1:${nj} ${logdir}/avg_bfcc_${name}.JOB.log pyscripts/feats/average-word.py ${logdir}/feats.JOB.scp ${logdir}/durations.JOB ${logdir}/text.JOB ark,scp:${bfccdir}/avg_bfcc_${name}.JOB.ark,${bfccdir}/avg_bfcc_${name}.JOB.scp ${logdir}/phone_word_mappings.JOB ark,scp:${logdir}/word_phone_mappings.JOB.ark,${logdir}/word_phone_mappings.JOB.scp 
 
 # concatenate the .scp files together.
 for n in $(seq ${nj}); do
@@ -87,7 +84,7 @@ for n in $(seq ${nj}); do
     cat ${logdir}/word_phone_mappings.$n.scp || exit 1;
 done > ${data}/word_phone_mappings.scp || exit 1
 
-rm -f ${logdir}/feats.*.scp ${logdir}/durations.* ${logdir}/pitch.* ${logdir}/text.* ${logdir}/word_phone_mappings.* 2>/dev/null
+# rm -f ${logdir}/feats.*.scp ${logdir}/durations.* ${logdir}/pitch.* ${logdir}/text.* ${logdir}/word_phone_mappings.* 2>/dev/null
 
 nf=$(wc -l < ${data}/feats_word_avg.scp)
 nu=$(wc -l < ${data}/wav.scp)
@@ -96,4 +93,4 @@ if [ ${nf} -ne ${nu} ]; then
     echo "consider using utils/fix_data_dir.sh $data"
 fi
 
-echo "Succeeded averaging BFCC features for $name"
+echo "Averaged $nf BFCC features for $name"

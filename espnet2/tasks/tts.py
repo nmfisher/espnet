@@ -214,6 +214,12 @@ class TTSTask(AbsTask):
             default=None,
             help="Total number of speakers (used for speaker embedding size)",
         )
+        group.add_argument(
+            "--num_prosody_clusters",
+            type=int_or_none,
+            default=None,
+            help="Number of prosody clusters to use (used for pitch/energy embedding size)",
+    )
 
         for class_choices in cls.class_choices_list:
             # Append --<name> and --<name>_conf.
@@ -294,7 +300,8 @@ class TTSTask(AbsTask):
             raise RuntimeError("token_list must be str or dict")
         
         vocab_size = len(token_list)
-        # logging.info(f"Vocabulary size: {vocab_size }")
+        print(f"Vocabulary size: {vocab_size }")
+        #raise Exception(token_list)
         
         # 1. feats_extract
         if args.odim is None:
@@ -319,6 +326,7 @@ class TTSTask(AbsTask):
             args.tts_conf = {}
         args.tts_conf["spks"] = args.num_speakers
         args.tts_conf["num_speakers"] = args.num_speakers
+        args.tts_conf["num_prosody_clusters"] = args.num_prosody_clusters
         # 3. TTS
         tts_class = tts_choices.get_class(args.tts)
         tts = tts_class(idim=vocab_size, odim=odim, **args.tts_conf)

@@ -173,7 +173,7 @@ class IterableESPnetDataset(IterableDataset):
                     try:
                         line = next(f)
                     except StopIteration:
-                        raise RuntimeError(f"{uid} is not found in the files")
+                        raise RuntimeError(f"{uid} is not found in the files {f}")
                     sps = line.rstrip().split(maxsplit=1)
                     if len(sps) != 2:
                         raise RuntimeError(

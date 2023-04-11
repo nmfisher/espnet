@@ -92,7 +92,8 @@ class Text2Speech:
         device: str = "cpu",
         seed: int = 777,
         always_fix_seed: bool = False,
-        num_speakers: Optional[int] = None
+        num_speakers: Optional[int] = None,
+        num_prosody_clusters: Optional[int] = None
     ):
         """Initialize Text2Speech module."""
         assert check_argument_types()
@@ -178,8 +179,8 @@ class Text2Speech:
             raise RuntimeError("Missing required argument: 'sids'")
         if self.use_lids and lids is None:
             raise RuntimeError("Missing required argument: 'lids'")
-        if self.use_spembs and spembs is None:
-           raise RuntimeError("Missing required argument: 'spembs'")
+        # if self.use_spembs and spembs is None:
+        #    raise RuntimeError("Missing required argument: 'spembs'")
         # prepare batch
         if isinstance(text, str):
             text = self.preprocess_fn("<dummy>", dict(text=text))["text"]
@@ -192,8 +193,8 @@ class Text2Speech:
             batch.update(pitch=pitch)
         if energy  is not None:
             batch.update(energy=energy)
-        if spembs is not None:
-            batch.update(spembs=spembs)
+        
+        batch.update(spembs=spembs)
         if sids is not None:
             batch.update(sids=sids)
         if lids is not None:
@@ -402,7 +403,8 @@ def inference(
     vocoder_config: Optional[str],
     vocoder_file: Optional[str],
     vocoder_tag: Optional[str],
-    num_speakers: Optional[int]
+    num_speakers: Optional[int],
+    num_prosody_clusters: Optional[int],
 ):
     """Run text-to-speech inference."""
     assert check_argument_types()
@@ -443,7 +445,8 @@ def inference(
         device=device,
         seed=seed,
         always_fix_seed=always_fix_seed,
-        num_speakers=num_speakers
+        num_speakers=num_speakers,
+        num_prosody_clusters=num_prosody_clusters
     )
     text2speech = Text2Speech.from_pretrained(
         model_tag=model_tag,
@@ -818,6 +821,12 @@ def get_parser():
             default=None,
             help="Total number of speakers (used for speaker embedding size)",
         )
+    group.add_argument(
+            "--num_prosody_clusters",
+            type=int_or_none,
+            default=None,
+            help="Number of prosody clusters to use (used for pitch/energy embedding size)",
+    )
     return parser
 
 

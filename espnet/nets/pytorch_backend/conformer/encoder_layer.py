@@ -78,7 +78,7 @@ class EncoderLayer(nn.Module):
         self.concat_linear = nn.Linear(size + size, size)
         self.stochastic_depth_rate = stochastic_depth_rate
 
-    def forward(self, x_input : Tuple [ torch.Tensor,torch.Tensor], mask: torch.Tensor, cache: Optional [ torch.Tensor ]=None):
+    def forward(self, x_input : Tuple [ torch.Tensor,torch.Tensor], mask:  Optional [ torch.Tensor ] , cache: Optional [ torch.Tensor ]=None):
         """Compute encoded features.
 
         Args:
@@ -138,7 +138,7 @@ class EncoderLayer(nn.Module):
             mask = None if mask is None else mask[:, -1:, :]
 
         if pos_emb is not None:
-            x_att = self.self_attn(x_q, x, x, pos_emb, mask)
+            x_att = self.self_attn(x_q, x, x, pos_emb, torch.jit._unwrap_optional(mask))
         else:
             x_att = self.self_attn(x_q, x, x, mask)
 

@@ -146,8 +146,7 @@ class ESPnetTTSModel(AbsESPnetModel):
 
         # Update batch for additional auxiliary inputs
         
-        if spembs is not None:
-            batch.update(spembs=spembs)
+        batch.update(spembs=spembs)
         if sids is not None:
             batch.update(sids=sids)
         if lids is not None:
@@ -160,8 +159,6 @@ class ESPnetTTSModel(AbsESPnetModel):
             batch.update(energy=energy, energy_lengths=energy_lengths)
         if self.tts.require_raw_speech:
             batch.update(speech=speech, speech_lengths=speech_lengths)
-        if phone_word_mappings is None:
-            raise Exception()
         batch.update(phone_word_mappings=phone_word_mappings, phone_word_mappings_lengths=phone_word_mappings_lengths,feats_word_avg=feats_word_avg,feats_word_avg_lengths=feats_word_avg_lengths)
 
         return self.tts(**batch)
@@ -311,8 +308,7 @@ class ESPnetTTSModel(AbsESPnetModel):
             if energy is not None:
                 input_dict.update(energy=energy)
 
-        if spembs is not None:
-            input_dict.update(spembs=spembs)
+        input_dict.update(spembs=spembs)
         if sids is not None:
             input_dict.update(sids=sids)
         if lids is not None:

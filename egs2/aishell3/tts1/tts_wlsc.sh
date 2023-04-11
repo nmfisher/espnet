@@ -228,20 +228,15 @@ fi
 # b) we want control over the exact token<->ID mappings (e.g. if we want to use exactly the same mappings in some other model
 # this script expects the file data/symbol_ids.txt to exist, and copies to ${dump_dir/token_list/tokens.txt} prepending <blank> and appending <sos/eos>
 # symbol_ids.txt has one token per line, where the line number (zero-indexed) represents the symbol ID.
-src_tokens=data/symbol_ids.txt
-if [ ! -f $src_tokens ]; then 
-    echo "Source token file does not exist at $src_tokens" && exit -1;
-fi;
+src_tokens=$(cat data/train/text | cut -d' ' -f2- | tr ' ' '\n' | tr '[:upper:]' '[:lower:]' | sort | uniq )
 
 mkdir -p "${dumpdir}/token_list"
 token_list="${dumpdir}/token_list/tokens.txt"
 rm -f $token_list
 echo $blank > $token_list
-cat $src_tokens >> $token_list
-echo "spn" >> $token_list
+echo "$src_tokens" >> $token_list
 echo $oov >> $token_list
 echo $sos_eos >> $token_list
-
 _nj=$nj
 
 # Set tag for naming of model directory
@@ -457,48 +452,48 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
 fi
 
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
-            _teacher_train_dir="${teacher_dumpdir}/${train_set}"
-            _teacher_valid_dir="${teacher_dumpdir}/${valid_set}"
+        _teacher_train_dir="${teacher_dumpdir}/${train_set}"
+        _teacher_valid_dir="${teacher_dumpdir}/${valid_set}"
 
-            _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/durations,durations,text_int "
-            _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/durations,durations,text_int "
-            _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/pitch,pitch,npy "
-            _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/pitch,pitch,npy "
-            _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/energy,energy,npy "
-            _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/energy,energy,npy "
-           
-            cp ${_teacher_train_dir}/durations  ${data_feats}/${train_set}/durations
-            cp ${_teacher_valid_dir}/durations  ${data_feats}/${valid_set}/durations
+        ./utils/filter_scp.pl "${data_feats}/${train_set}/wav.scp" ${_teacher_train_dir}/durations > ${data_feats}/${train_set}/durations
+        ./utils/filter_scp.pl "${data_feats}/${valid_set}/wav.scp" ${_teacher_valid_dir}/durations > ${data_feats}/${valid_set}/durations
+#        cp ${_teacher_train_dir}/durations  ${data_feats}/${train_set}/durations
+#        cp ${_teacher_valid_dir}/durations  ${data_feats}/${valid_set}/durations
+        # with hop_length=160, sample rate = 16000, frame length is 10ms, so multiply durations in seconds by 100 to get duration in frames
+         
+        cat ${data_feats}/${train_set}/durations | awk -F' ' '{printf "%s ",$1; for(i=2;i<=NF;i++) { printf "%d ",$i*100;} printf "\n"}' > ${data_feats}/${train_set}/durations_int
+        cat ${data_feats}/${valid_set}/durations | awk -F' ' '{printf "%s ",$1; for(i=2;i<=NF;i++) { printf "%d ",$i*100;} printf "\n"}' > ${data_feats}/${valid_set}/durations_int
 
-            ./utils/fix_data_dir.sh "${data_feats}/${train_set}"
-            ./utils/fix_data_dir.sh "${data_feats}/${valid_set}"
- 
-            ./scripts/feats/fix_durations.sh \
-                    ${data_feats}/${train_set}/feats.scp \
-                    ${data_feats}/${valid_set}/feats.scp \
-                    ${data_feats}/${train_set}/durations \
-                    "${data_feats}/${train_set}/durations_fixed" \
-                    ${data_feats}/${valid_set}/durations \
-                    "${data_feats}/${valid_set}/durations_fixed"
+        ./utils/fix_data_dir.sh "${data_feats}/${train_set}"
+        ./utils/fix_data_dir.sh "${data_feats}/${valid_set}"
 
-            mv "${data_feats}/${train_set}/durations_fixed" "${data_feats}/${train_set}/durations"
+        ./scripts/feats/fix_durations.sh \
+                ${data_feats}/${train_set}/feats.scp \
+                ${data_feats}/${valid_set}/feats.scp \
+                ${data_feats}/${train_set}/durations_int \
+                "${data_feats}/${train_set}/durations_fixed" \
+                ${data_feats}/${valid_set}/durations_int \
+                "${data_feats}/${valid_set}/durations_fixed"
 
-            mv "${data_feats}/${valid_set}/durations_fixed" "${data_feats}/${valid_set}/durations"
-            for dset in "${train_set}" "${valid_set}"; do
-                ./scripts/feats/extract_f0.sh --nj ${nj} \
-                ${data_feats}/${dset}/wav.scp \
-                ${data_feats}/${dset}/durations \
-                ${data_feats}/${dset}/text \
-                ${data_feats}/${dset}/pitch \
-                ${data_feats}/${dset}/energy \
-                ${f0min} ${f0max} ${data_feats}/${dset}/data
-            done
-            # ./scripts/normalize_f0.sh ${data_feats}/${train_set} ${data_feats}/${valid_set} 
-            
-
+       mv "${data_feats}/${train_set}/durations_fixed" "${data_feats}/${train_set}/durations"
+       mv "${data_feats}/${valid_set}/durations_fixed" "${data_feats}/${valid_set}/durations"
 fi
 
+if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
+    for dset in "${train_set}" "${valid_set}"; do
+        ./scripts/feats/extract_f0.sh --nj ${nj} ${data_feats}/${dset} ${f0min} ${f0max} 
+    done
+fi
+
+num_prosody_clusters=$(grep "num_prosody_clusters" ${train_config} | sed "s/[^0-9+]//g");
+
+#if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ]; then
+    #./scripts/feats/cluster_f0.sh ${data_feats}/${train_set} ${data_feats}/${valid_set} ${num_prosody_clusters}
+    # ./scripts/normalize_f0.sh ${data_feats}/${train_set} ${data_feats}/${valid_set} 
+#fi
+
 if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ]; then
+    log "Stage 7: Averaging BFCCs per word"
     ./utils/filter_scp.pl ${data_feats}/${train_set}/feats.scp data/${train_set}/phone_word_mappings > ${data_feats}/${train_set}/phone_word_mappings
     ./utils/filter_scp.pl ${data_feats}/${valid_set}/feats.scp data/${valid_set}/phone_word_mappings > ${data_feats}/${valid_set}/phone_word_mappings
     ./scripts/feats/average_feats.sh --nj "${_nj}" ${data_feats}/${train_set}
@@ -509,7 +504,7 @@ if ! "${skip_train}"; then
     if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
         _train_dir="${data_feats}/${train_set}"
         _valid_dir="${data_feats}/${valid_set}"
-        log "Stage 7: TTS collect stats: train_set=${_train_dir}, valid_set=${_valid_dir}"
+        log "Stage 8: TTS collect stats: train_set=${_train_dir}, valid_set=${_valid_dir}"
 
         _opts=
         if [ -n "${train_config}" ]; then
@@ -520,6 +515,13 @@ if ! "${skip_train}"; then
 
         _scp=feats.scp
         _type=kaldi_ark
+
+        # _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/durations,durations,kaldi_ark "
+        # _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/durations,durations,kaldi_ark "
+        # _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/pitch_clusters.scp,pitch,kaldi_ark "
+        # _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/pitch_clusters.scp,pitch,kaldi_ark "
+        # _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/energy_clusters,energy,kaldi_ark "
+        # _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/energy_clusters,energy,kaldi_ark "
 
         if "${use_xvector}"; then
             _xvector_train_dir="${data_feats}/${train_set}"
@@ -591,18 +593,21 @@ if ! "${skip_train}"; then
                 --valid_data_path_and_name_and_type "${_valid_dir}/${_scp},speech,${_type}" \
                 --train_data_path_and_name_and_type "${_train_dir}/durations,durations,text_int " \
                 --valid_data_path_and_name_and_type "${_valid_dir}/durations,durations,text_int " \
-                --train_data_path_and_name_and_type "${_train_dir}/phone_word_mappings,phone_word_mappings,text_int   " \
-                --valid_data_path_and_name_and_type "${_valid_dir}/phone_word_mappings,phone_word_mappings,text_int   " \
                 --train_shape_file "${_logdir}/train.JOB.scp" \
                 --valid_shape_file "${_logdir}/valid.JOB.scp" \
                 --output_dir "${_logdir}/stats.JOB" \
                 --allow_variable_data_keys true \
                 --odim "$odim " \
                 ${_opts} ${train_args} || { cat "${_logdir}"/stats.1.log; exit 1; }
+#                --train_data_path_and_name_and_type "${_train_dir}/pitch_clusters.scp,pitch,kaldi_ark   " \
+#                --train_data_path_and_name_and_type "${_train_dir}/energy_clusters.scp,energy,kaldi_ark   " \
+#                --valid_data_path_and_name_and_type "${_valid_dir}/pitch_clusters.scp,pitch,kaldi_ark   " \
+#                --valid_data_path_and_name_and_type "${_valid_dir}/energy_clusters.scp,energy,kaldi_ark   " \
 
                 #                 --train_data_path_and_name_and_type "${_train_dir}/word_phone_mappings.scp,word_phone_mappings,kaldi_ark  " \
                 # --valid_data_path_and_name_and_type "${_valid_dir}/word_phone_mappings.scp,word_phone_mappings,kaldi_ark  " \
-
+#                --train_data_path_and_name_and_type "${_train_dir}/phone_word_mappings,phone_word_mappings,text_int   " \
+ #               --valid_data_path_and_name_and_type "${_valid_dir}/phone_word_mappings,phone_word_mappings,text_int   " \
         # 4. Aggregate shape files
         _opts=
         for i in $(seq "${_nj}"); do
@@ -653,14 +658,18 @@ if ! "${skip_train}"; then
 
         _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/durations,durations,text_int "
         _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/durations,durations,text_int "
-        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/pitch,pitch,npy "
-        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/pitch,pitch,npy "
-        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/energy,energy,npy "
-        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/energy,energy,npy "
-        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " \
-        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " \
-        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/phone_word_mappings,phone_word_mappings,text_int   " \
-        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/phone_word_mappings,phone_word_mappings,text_int   " \
+        # _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/pitch,pitch,npy "
+        # _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/pitch,pitch,npy "
+        # _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/energy,energy,npy "
+        # _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/energy,energy,npy "
+#        _opts+="--train_data_path_and_name_and_type ${_train_dir}/pitch_clusters.scp,pitch,kaldi_ark   "
+#        _opts+="--train_data_path_and_name_and_type ${_train_dir}/energy_clusters.scp,energy,kaldi_ark   "
+#        _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/pitch_clusters.scp,pitch,kaldi_ark   " 
+#        _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/energy_clusters.scp,energy,kaldi_ark   "
+#        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " \
+#        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " \
+#        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/phone_word_mappings,phone_word_mappings,text_int   " \
+#        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/phone_word_mappings,phone_word_mappings,text_int   " \
         _opts+="--odim ${odim} "
         # _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/word_phone_mappings.scp,word_phone_mappings,kaldi_ark  " \
         # _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/word_phone_mappings.scp,word_phone_mappings,kaldi_ark  " \
@@ -795,12 +804,12 @@ if ! "${skip_eval}"; then
                 # Use groundtruth of durations
                 _teacher_dir="${teacher_dumpdir}/${dset}"
                 _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/durations,durations,text_int "
-                _opts+="--data_path_and_name_and_type ${_data}/pitch,pitch,npy "
-                _opts+="--data_path_and_name_and_type ${_data}/energy,energy,npy "
+#                _opts+="--data_path_and_name_and_type ${_data}/pitch_clusters.scp,pitch,kaldi_ark "
+#                _opts+="--data_path_and_name_and_type ${_data}/energy_clusters.scp,energy,kaldi_ark "
             fi
             
-            _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/phone_word_mappings,phone_word_mappings,text_int   " 
-            _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " 
+#            _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/phone_word_mappings,phone_word_mappings,text_int   " 
+#            _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " 
 
             # Add X-vector to the inputs if needed
             if "${use_xvector}"; then
@@ -980,10 +989,10 @@ if [ ${stage} -le 12 ] && [ ${stop_stage} -ge 12 ]; then
     _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/pitch,pitch,npy "
     _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/energy,energy,npy "
     _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/energy,energy,npy "
-    _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " \
-    _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " \
-    _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/phone_word_mappings,phone_word_mappings,text_int   " \
-    _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/phone_word_mappings,phone_word_mappings,text_int   " \
+#    _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " \
+#    _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " \
+#    _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/phone_word_mappings,phone_word_mappings,text_int   " \
+#    _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/phone_word_mappings,phone_word_mappings,text_int   " \
     _opts+="--odim ${odim} "
 
     if [ -e ${_teacher_train_dir}/probs ]; then
@@ -1051,199 +1060,148 @@ if [ ${stage} -le 12 ] && [ ${stop_stage} -ge 12 ]; then
 fi
 
 if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
-        log "Stage 13: Decoding: training_dir=${student_tts_exp}"
+    log "Stage 13: Decoding: training_dir=${student_tts_exp}"
 
-        if ${gpu_inference}; then
-            _cmd="${cuda_cmd}"
-            _ngpu=1
-        else
-            _cmd="${decode_cmd}"
-            _ngpu=0
+    if ${gpu_inference}; then
+        _cmd="${cuda_cmd}"
+        _ngpu=1
+    else
+        _cmd="${decode_cmd}"
+        _ngpu=0
+    fi
+
+    _opts=
+    if [ -n "${inference_config}" ]; then
+        _opts+="--config ${inference_config} "
+    fi
+
+    _scp=feats.scp
+    # if [[ "${audio_format}" == *ark* ]]; then
+        _type=kaldi_ark
+    # else
+    #     # "sound" supports "wav", "flac", etc.
+    #     _type=sound
+    # fi
+
+
+    for dset in ${test_sets}; do
+        _data="${data_feats}/${dset}"
+        _speech_data="${_data}"
+        _dir="${student_tts_exp}/${inference_tag}/${dset}"
+        _logdir="${_dir}/log"
+        mkdir -p "${_logdir}"
+
+        _ex_opts=""
+        if [ -n "${teacher_dumpdir}" ]; then
+            # Use groundtruth of durations
+            _teacher_dir="${teacher_dumpdir}/${dset}"
+            _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/durations,durations,text_int "
+            _opts+="--data_path_and_name_and_type ${_data}/pitch,pitch,npy "
+            _opts+="--data_path_and_name_and_type ${_data}/energy,energy,npy "
+        fi
+        
+#        _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/phone_word_mappings,phone_word_mappings,text_int   " \
+#        _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " \
+
+        # Add X-vector to the inputs if needed
+        if "${use_xvector}"; then
+            _xvector_dir="${data_feats}/${dset}"
+            _ex_opts+="--data_path_and_name_and_type ${_xvector_dir}/xvector.scp,spembs,kaldi_ark "
         fi
 
-        _opts=
-        if [ -n "${inference_config}" ]; then
-            _opts+="--config ${inference_config} "
+        # Add spekaer ID to the inputs if needed
+        if "${use_sid}"; then
+            _ex_opts+="--data_path_and_name_and_type ${_data}/utt2sid,sids,text_int "
+            _opts+="--num_speakers $(cat "${data_feats}/org/${train_set}/spk2sid" | wc -l)"
         fi
 
-        _scp=feats.scp
-        # if [[ "${audio_format}" == *ark* ]]; then
-            _type=kaldi_ark
-        # else
-        #     # "sound" supports "wav", "flac", etc.
-        #     _type=sound
-        # fi
+        # Add language ID to the inputs if needed
+        if "${use_lid}"; then
+            _ex_opts+="--data_path_and_name_and_type ${_data}/utt2lid,lids,text_int "
+        fi
 
+        # 0. Copy feats_type
+        cp "${_data}/feats_type" "${_dir}/feats_type"
 
-        for dset in ${test_sets}; do
-            _data="${data_feats}/${dset}"
-            _speech_data="${_data}"
-            _dir="${student_tts_exp}/${inference_tag}/${dset}"
-            _logdir="${_dir}/log"
-            mkdir -p "${_logdir}"
-
-            _ex_opts=""
-            if [ -n "${teacher_dumpdir}" ]; then
-                # Use groundtruth of durations
-                _teacher_dir="${teacher_dumpdir}/${dset}"
-                _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/durations,durations,text_int "
-                _opts+="--data_path_and_name_and_type ${_data}/pitch,pitch,npy "
-                _opts+="--data_path_and_name_and_type ${_data}/energy,energy,npy "
-            fi
-            
-            _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/phone_word_mappings,phone_word_mappings,text_int   " \
-            _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/feats_word_avg.scp,feats_word_avg,kaldi_ark  " \
-
-            # Add X-vector to the inputs if needed
-            if "${use_xvector}"; then
-                _xvector_dir="${data_feats}/${dset}"
-                _ex_opts+="--data_path_and_name_and_type ${_xvector_dir}/xvector.scp,spembs,kaldi_ark "
-            fi
-
-            # Add spekaer ID to the inputs if needed
-            if "${use_sid}"; then
-                _ex_opts+="--data_path_and_name_and_type ${_data}/utt2sid,sids,text_int "
-                _opts+="--num_speakers $(cat "${data_feats}/org/${train_set}/spk2sid" | wc -l)"
-            fi
-
-            # Add language ID to the inputs if needed
-            if "${use_lid}"; then
-                _ex_opts+="--data_path_and_name_and_type ${_data}/utt2lid,lids,text_int "
-            fi
-
-            # 0. Copy feats_type
-            cp "${_data}/feats_type" "${_dir}/feats_type"
-
-            # 1. Split the key file
-            key_file=${_data}/text
-            split_scps=""
-            _nj=$(min "${inference_nj}" "$(<${key_file} wc -l)")
-            for n in $(seq "${_nj}"); do
-                split_scps+=" ${_logdir}/keys.${n}.scp"
-            done
-            # shellcheck disable=SC2086
-            utils/split_scp.pl "${key_file}" ${split_scps}
-
-            # 3. Submit decoding jobs
-            log "Decoding started... log: '${_logdir}/tts_inference.*.log'  ${_speech_data}/${_scp},speech,${_type} "
-            # shellcheck disable=SC2086
-            ${_cmd} --gpu "${_ngpu}" JOB=1:"${_nj}" "${_logdir}"/tts_inference.JOB.log \
-                ${python} -m espnet2.bin.tts_inference \
-                    --ngpu "${_ngpu}" \
-                    --data_path_and_name_and_type "${_data}/text,text,text" \
-                    --data_path_and_name_and_type ${_speech_data}/${_scp},speech,${_type} \
-                    --key_file "${_logdir}"/keys.JOB.scp \
-                    --model_file "${student_tts_exp}"/"${inference_model}" \
-                    --train_config "${student_tts_exp}"/config.yaml \
-                    --output_dir "${_logdir}"/output.JOB \
-                    --vocoder_file "${vocoder_file}" \
-                    ${_opts} ${_ex_opts} ${inference_args}
-
-            # 4. Concatenates the output files from each jobs
-            if [ -e "${_logdir}/output.${_nj}/norm" ]; then
-                mkdir -p "${_dir}"/norm
-                for i in $(seq "${_nj}"); do
-                     cat "${_logdir}/output.${i}/norm/feats.scp"
-                done | LC_ALL=C sort -k1 > "${_dir}/norm/feats.scp"
-            fi
-            if [ -e "${_logdir}/output.${_nj}/denorm" ]; then
-                mkdir -p "${_dir}"/denorm
-                for i in $(seq "${_nj}"); do
-                     cat "${_logdir}/output.${i}/denorm/feats.scp"
-                done | LC_ALL=C sort -k1 > "${_dir}/denorm/feats.scp"
-            fi
-            if [ -e "${_logdir}/output.${_nj}/speech_shape" ]; then
-                for i in $(seq "${_nj}"); do
-                     cat "${_logdir}/output.${i}/speech_shape/speech_shape"
-                done | LC_ALL=C sort -k1 > "${_dir}/speech_shape"
-            fi
-            if [ -e "${_logdir}/output.${_nj}/wav" ]; then
-                mkdir -p "${_dir}"/wav
-                for i in $(seq "${_nj}"); do
-                    mv -u "${_logdir}/output.${i}"/wav/*.wav "${_dir}"/wav
-                    rm -rf "${_logdir}/output.${i}"/wav
-                done
-                find "${_dir}/wav" -name "*.wav" | while read -r line; do
-                    echo "$(basename "${line}" .wav) ${line}"
-                done | LC_ALL=C sort -k1 > "${_dir}/wav/wav.scp"
-            fi
-            if [ -e "${_logdir}/output.${_nj}/att_ws" ]; then
-                mkdir -p "${_dir}"/att_ws
-                for i in $(seq "${_nj}"); do
-                    mv -u "${_logdir}/output.${i}"/att_ws/*.png "${_dir}"/att_ws
-                    rm -rf "${_logdir}/output.${i}"/att_ws
-                done
-            fi
-            if [ -e "${_logdir}/output.${_nj}/durations" ]; then
-                for i in $(seq "${_nj}"); do
-                     cat "${_logdir}/output.${i}/durations/durations"
-                done | LC_ALL=C sort -k1 > "${_dir}/durations"
-            fi
-            if [ -e "${_logdir}/output.${_nj}/focus_rates" ]; then
-                for i in $(seq "${_nj}"); do
-                     cat "${_logdir}/output.${i}/focus_rates/focus_rates"
-                done | LC_ALL=C sort -k1 > "${_dir}/focus_rates"
-            fi
-            if [ -e "${_logdir}/output.${_nj}/probs" ]; then
-                mkdir -p "${_dir}"/probs
-                for i in $(seq "${_nj}"); do
-                    mv -u "${_logdir}/output.${i}"/probs/*.png "${_dir}"/probs
-                    rm -rf "${_logdir}/output.${i}"/probs
-                done
-            fi
+        # 1. Split the key file
+        key_file=${_data}/text
+        split_scps=""
+        _nj=$(min "${inference_nj}" "$(<${key_file} wc -l)")
+        for n in $(seq "${_nj}"); do
+            split_scps+=" ${_logdir}/keys.${n}.scp"
         done
-    fi
+        # shellcheck disable=SC2086
+        utils/split_scp.pl "${key_file}" ${split_scps}
 
-if ! "${skip_upload_hf}"; then
-    if [ ${stage} -le 10 ] && [ ${stop_stage} -ge 10 ]; then
-        [ -z "${hf_repo}" ] && \
-            log "ERROR: You need to setup the variable hf_repo with the name of the repository located at HuggingFace" && \
-            exit 1
-        log "Stage 10: Upload model to HuggingFace: ${hf_repo}"
+        # 3. Submit decoding jobs
+        log "Decoding started... log: '${_logdir}/tts_inference.*.log'  ${_speech_data}/${_scp},speech,${_type} "
+        # shellcheck disable=SC2086
+        ${_cmd} --gpu "${_ngpu}" JOB=1:"${_nj}" "${_logdir}"/tts_inference.JOB.log \
+            ${python} -m espnet2.bin.tts_inference \
+                --ngpu "${_ngpu}" \
+                --data_path_and_name_and_type "${_data}/text,text,text" \
+                --data_path_and_name_and_type ${_speech_data}/${_scp},speech,${_type} \
+                --key_file "${_logdir}"/keys.JOB.scp \
+                --model_file "${student_tts_exp}"/"${inference_model}" \
+                --train_config "${student_tts_exp}"/config.yaml \
+                --output_dir "${_logdir}"/output.JOB \
+                --vocoder_file "${vocoder_file}" \
+                ${_opts} ${_ex_opts} ${inference_args}
 
-        gitlfs=$(git lfs --version 2> /dev/null || true)
-        [ -z "${gitlfs}" ] && \
-            log "ERROR: You need to install git-lfs first" && \
-            exit 1
-
-        dir_repo=${expdir}/hf_${hf_repo//"/"/"_"}
-        [ ! -d "${dir_repo}" ] && git clone https://huggingface.co/${hf_repo} ${dir_repo}
-
-        if command -v git &> /dev/null; then
-            _creator_name="$(git config user.name)"
-            _checkout="git checkout $(git show -s --format=%H)"
-        else
-            _creator_name="$(whoami)"
-            _checkout=""
+        # 4. Concatenates the output files from each jobs
+        if [ -e "${_logdir}/output.${_nj}/norm" ]; then
+            mkdir -p "${_dir}"/norm
+            for i in $(seq "${_nj}"); do
+                    cat "${_logdir}/output.${i}/norm/feats.scp"
+            done | LC_ALL=C sort -k1 > "${_dir}/norm/feats.scp"
         fi
-        # /some/where/espnet/egs2/foo/asr1/ -> foo/asr1
-        _task="$(pwd | rev | cut -d/ -f2 | rev)"
-        # foo/asr1 -> foo
-        _corpus="${_task%/*}"
-        _model_name="${_creator_name}/${_corpus}_$(basename ${packed_model} .zip)"
-
-        # copy files in ${dir_repo}
-        unzip -o ${packed_model} -d ${dir_repo}
-        # Generate description file
-        # shellcheck disable=SC2034
-        hf_task=text-to-speech
-        # shellcheck disable=SC2034
-        espnet_task=TTS
-        # shellcheck disable=SC2034
-        task_exp=${tts_exp}
-        eval "echo \"$(cat scripts/utils/TEMPLATE_HF_Readme.md)\"" > "${dir_repo}"/README.md
-
-        this_folder=${PWD}
-        cd ${dir_repo}
-        if [ -n "$(git status --porcelain)" ]; then
-            git add .
-            git commit -m "Update model"
+        if [ -e "${_logdir}/output.${_nj}/denorm" ]; then
+            mkdir -p "${_dir}"/denorm
+            for i in $(seq "${_nj}"); do
+                    cat "${_logdir}/output.${i}/denorm/feats.scp"
+            done | LC_ALL=C sort -k1 > "${_dir}/denorm/feats.scp"
         fi
-        git push
-        cd ${this_folder}
-    fi
-else
-    log "Skip the uploading to HuggingFace stage"
+        if [ -e "${_logdir}/output.${_nj}/speech_shape" ]; then
+            for i in $(seq "${_nj}"); do
+                    cat "${_logdir}/output.${i}/speech_shape/speech_shape"
+            done | LC_ALL=C sort -k1 > "${_dir}/speech_shape"
+        fi
+        if [ -e "${_logdir}/output.${_nj}/wav" ]; then
+            mkdir -p "${_dir}"/wav
+            for i in $(seq "${_nj}"); do
+                mv -u "${_logdir}/output.${i}"/wav/*.wav "${_dir}"/wav
+                rm -rf "${_logdir}/output.${i}"/wav
+            done
+            find "${_dir}/wav" -name "*.wav" | while read -r line; do
+                echo "$(basename "${line}" .wav) ${line}"
+            done | LC_ALL=C sort -k1 > "${_dir}/wav/wav.scp"
+        fi
+        if [ -e "${_logdir}/output.${_nj}/att_ws" ]; then
+            mkdir -p "${_dir}"/att_ws
+            for i in $(seq "${_nj}"); do
+                mv -u "${_logdir}/output.${i}"/att_ws/*.png "${_dir}"/att_ws
+                rm -rf "${_logdir}/output.${i}"/att_ws
+            done
+        fi
+        if [ -e "${_logdir}/output.${_nj}/durations" ]; then
+            for i in $(seq "${_nj}"); do
+                    cat "${_logdir}/output.${i}/durations/durations"
+            done | LC_ALL=C sort -k1 > "${_dir}/durations"
+        fi
+        if [ -e "${_logdir}/output.${_nj}/focus_rates" ]; then
+            for i in $(seq "${_nj}"); do
+                    cat "${_logdir}/output.${i}/focus_rates/focus_rates"
+            done | LC_ALL=C sort -k1 > "${_dir}/focus_rates"
+        fi
+        if [ -e "${_logdir}/output.${_nj}/probs" ]; then
+            mkdir -p "${_dir}"/probs
+            for i in $(seq "${_nj}"); do
+                mv -u "${_logdir}/output.${i}"/probs/*.png "${_dir}"/probs
+                rm -rf "${_logdir}/output.${i}"/probs
+            done
+        fi
+    done
 fi
+
 
 log "Successfully finished. [elapsed=${SECONDS}s]"

@@ -20,3 +20,6 @@ See the following pages before asking the question:
 ### aishell3_tts_train_raw_phn_pypinyin_g2p_phone_train.loss.best
 - Tacotron2
 - https://huggingface.co/ftshijt/ESPnet2_pretrained_model_ftshijt_aishell3_tts_train_raw_phn_pypinyin_g2p_phone_train.loss.best
+
+./tts_wlsc.sh --inference_nj 1 --nj 1 --train_config conf/tuning/train_wlsc.yaml --teacher_dumpdir data --train_set train --valid-set test --test-sets test --g2p none --cleaner none --token_type phn --python python3.7 --inference_model latest.pth --use-sid true --stage 6 "$@"; exit $?
+

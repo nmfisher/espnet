@@ -17,9 +17,6 @@ def get_parser():
         "feats", type=str, help="Path to extracted features in SCP format (e.g. 'feats.scp')"
     )
     parser.add_argument(
-        "pitch", type=str, help="Path to extracted pitch features in SCP format (e.g. 'pitch.scp')"
-    )
-    parser.add_argument(
         "durations", type=str, help="Path to durations (e.g. 'durations') (tab-separated, leftmost column is utterance ID, right column is space-separated list of ints where each int is the duration of the phone at that index"
     )
     parser.add_argument(
@@ -71,12 +68,10 @@ def main():
                         for ((utt_id, durations), \
                             (utt_id2_,phones,), \
                             (utt_id3, feats), \
-                            (utt_id4,pitch_file), \
                             (utt_id5, phone_word_mappings)) in \
                                 zip(durations, \
                                     transcripts, \
                                     feats_reader, \
-                                    _open(args.pitch), \
                                     _open(args.phone_word_mappings)):
                             if utt_id5 != utt_id:
                                 raise Exception("Mismatched files")

@@ -507,22 +507,17 @@ class WLSCStudent(WLSC):
         # else:
         # elif self.iter <= 6000 or (self.iter >= 12000 and self.iter <= 15000):
         # if self.iter
-        error_loss = F.mse_loss(after_outs_s.masked_select(out_masks), feats.masked_select(out_masks) - (self.ratio.item() * after_outs_t.masked_select(out_masks)))
         loss = l1_loss + duration_loss + prior_loss + spk_loss + (0.1 * (student_loss + teacher_loss)) #+ error_loss
 
-        loss = l1_loss
+        # loss = l1_loss
 
         stats = dict(
             l1_loss=l1_loss.item(),
             duration_loss=duration_loss.item(),
             prior_loss=prior_loss.item(),
             spk_loss=spk_loss.item(),
-            #enc_loss=enc_loss.item(),
-            # c_loss=c_loss.item()
-            #dec_loss=dec_loss.item()
             student_loss=student_loss.item(),
             teacher_loss=teacher_loss.item(),
-            error_loss=error_loss.item(),
             ratio=self.ratio.item()
         )
         # l1_loss = torch.nn.functional.smooth_l1_loss(before_outs_s, feats)
@@ -538,42 +533,52 @@ class WLSCStudent(WLSC):
         # #     teacher_dec=zs_t
         # # )
 
-        # # loss = feats_loss + enc_loss + dec_loss 
-
-        # stats = dict(
-        #     l1_loss=l1_loss.item(),
-        #     # teacher_loss=teacher_loss.item(),
-        #     # student_loss=student_loss.item()
-        #     # feats_loss=feats_loss.item(),
-        #     # enc_loss=enc_loss.item(),
-        #     # dec_loss=dec_loss.item()
-        # )
-
         loss, stats, weight = force_gatherable(
             (loss, stats, batch_size), loss.device
         )
-        # i = 0
-        # loss.backward()
-        # for layer in [
-        #     self.spk_embed,
-        #     self.word_style_encoder,
-        #     self.word_seq_proj,
-        #     self.word_seq_enc,
-        #     self.enc,
-        #     self.dec
-        # ]:
-        #     total_norm = 0
-        #     for p in layer.parameters():
-        #         if p.grad is not None:
-        #             param_norm = p.grad.detach().data.norm(2)
-        #             total_norm += param_norm.item() ** 2
-        #             total_norm = total_norm ** 0.5
-        #     print(f"{i} {total_norm}")
-        #     i += 1
-
         return loss, stats, weight
 
-    # def inference(
+    
+    
+    def _source_mask(self, ilens: torch.Tensor) -> torch.Tensor:
+        """Make masks for self-attention.
+
+        Args:
+            ilens (LongTensor): Batch of lengths (B,).
+
+        Returns:
+            Tensor: Mask tensor for self-attention.
+                dtype=torch.uint8 in PyTorch 1.2-
+                dtype=torch.bool in PyTorch 1.2+ (including 1.2)
+
+        Examples:
+            >>> ilens = [5, 3]
+            >>> self._source_mask(ilens)
+            tensor([[[1, 1, 1, 1, 1],
+                     [1, 1, 1, 0, 0]]], dtype=torch.uint8)
+
+        """
+        x_masks = make_non_pad_mask(ilens).to(ilens.device)
+        return x_masks.unsqueeze(-2)
+
+    def export(
+        self,
+        text: torch.Tensor,
+        sids:torch.Tensor,
+        phone_word_mappings:torch.Tensor,
+        feats_word_avg: torch.Tensor,
+        spembs: torch.Tensor,
+    ) -> Tuple[torch.Tensor,torch.Tensor,torch.Tensor]:
+        return self._inference(text, sids=sids,phone_word_mappings=phone_word_mappings,feats_word_avg=feats_word_avg, spembs=spembs)     
+
+    
+    @property
+    def require_vocoder(self):
+        """Return whether or not vocoder is required."""
+        return False
+
+
+# def inference(
     #     self,
     #     text: torch.LongTensor,
     #     durations:Optional[torch.Tensor] = None,
@@ -717,40 +722,3 @@ class WLSCStudent(WLSC):
     #     ).transpose(1, 2)
         
     #     return before_outs, d_outs, phone_word_mappings
-    
-    def _source_mask(self, ilens: torch.Tensor) -> torch.Tensor:
-        """Make masks for self-attention.
-
-        Args:
-            ilens (LongTensor): Batch of lengths (B,).
-
-        Returns:
-            Tensor: Mask tensor for self-attention.
-                dtype=torch.uint8 in PyTorch 1.2-
-                dtype=torch.bool in PyTorch 1.2+ (including 1.2)
-
-        Examples:
-            >>> ilens = [5, 3]
-            >>> self._source_mask(ilens)
-            tensor([[[1, 1, 1, 1, 1],
-                     [1, 1, 1, 0, 0]]], dtype=torch.uint8)
-
-        """
-        x_masks = make_non_pad_mask(ilens).to(ilens.device)
-        return x_masks.unsqueeze(-2)
-
-    def export(
-        self,
-        text: torch.Tensor,
-        sids:torch.Tensor,
-        phone_word_mappings:torch.Tensor,
-        feats_word_avg: torch.Tensor,
-        spembs: torch.Tensor,
-    ) -> Tuple[torch.Tensor,torch.Tensor,torch.Tensor]:
-        return self._inference(text, sids=sids,phone_word_mappings=phone_word_mappings,feats_word_avg=feats_word_avg, spembs=spembs)     
-
-    
-    @property
-    def require_vocoder(self):
-        """Return whether or not vocoder is required."""
-        return False
