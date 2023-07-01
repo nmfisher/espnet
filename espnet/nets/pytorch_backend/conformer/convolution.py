@@ -43,14 +43,14 @@ class ConvolutionModule(nn.Module):
             bias=bias,
         )
         self.norm = nn.BatchNorm1d(channels)
-        # self.pointwise_conv2 = nn.Conv1d(
-        #     channels,
-        #     channels,
-        #     kernel_size=1,
-        #     stride=1,
-        #     padding=0,
-        #     bias=bias,
-        # )
+        self.pointwise_conv2 = nn.Conv1d(
+            channels,
+            channels,
+            kernel_size=1,
+            stride=1,
+            padding=0,
+            bias=bias,
+        )
         self.activation = activation
 
     def forward(self, x):
@@ -74,6 +74,6 @@ class ConvolutionModule(nn.Module):
         x = self.depthwise_conv(x)
         x = self.activation(self.norm(x))
 
-        # x = self.pointwise_conv2(x)
+        x = self.pointwise_conv2(x)
 
         return x.transpose(1, 2)
