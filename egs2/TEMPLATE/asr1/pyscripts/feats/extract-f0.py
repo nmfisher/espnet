@@ -91,7 +91,7 @@ def extract(wavs, durations, transcripts, sample_rate, hop_length):
         if len(utt_durations) != len(transcript):
           print(utt_durations)
           print(transcript)
-          raise Exception(f"Number of phone frame durations {len(utt_durations)} does not match number of phones in transcript {len(transcript)} for utt {utt_id}, do the wav.scp/text/durations files all match exactly?")
+          raise Exception(f"Number of phone frame durations ({len(utt_durations)}) does not match number of phones in transcript ({len(transcript)}) for utt {utt_id}, do the wav.scp/text/durations files all match exactly?")
 
         utt_durations = [ int(x) for x in utt_durations ]
 
