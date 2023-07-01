@@ -16,33 +16,35 @@
 tts: wlsc      # model architecture
 tts_conf:             # keyword arguments for the selected model
     spk_embed_dim: 24
-    phone_embed_dim: 128
+    phone_embed_dim: 128   
     #word_seq_embed_dim: 72
     # word_seq_proj_dim: 72
     # style_token_dim: 72
     # word_seq_encoder_dropout: 0.0
     encoder_adim: 128
-    encoder_linear_units: 128
-    encoder_aheads: 2
+    # encoder_linear_units: 1024
+    # encoder_aheads: 8
     encoder_numblocks: 1
-    encoder_dropout_rate: 0.0
+    encoder_dropout_rate: 0.1
     encoder_positional_dropout_rate: 0.1
     encoder_attention_dropout_rate: 0.1
     # encoder_conv_kernel_size: 5
-    # encoder_positionwise_layer_type: "linear"
-    # encoder_use_cnn_module: true
+    # encoder_positionwise_conv_kernel_size: 1
+    encoder_positionwise_layer_type: "linear"
+    encoder_use_cnn_module: False
     # style_encoder_aheads: 2
-    decoder_adim: 128
+    decoder_adim: 256
     decoder_aheads: 4
     decoder_numblocks: 3
-    decoder_positionwise_layer_type: "conv1d-linear"
-    decoder_positionwise_conv_kernel_size: 7
-    decoder_use_cnn_module: false
+    decoder_positionwise_layer_type: "linear"
+    encoder_positionwise_conv_kernel_size: 1
+    decoder_use_cnn_module: False
     decoder_dropout_rate: 0.1
     decoder_positional_dropout_rate: 0.1
     decoder_attention_dropout_rate: 0.1
-    decoder_cnn_module_kernel: 21
+    #decoder_cnn_module_kernel: 21
     decoder_linear_units: 1024
+    decoder_macaron_style: False
 # extra module for additional inputs
 #pitch_extract: dio           # pitch extractor type
 #pitch_normalize: global_mvn  # normalizer for the pitch feature
@@ -57,21 +59,22 @@ optim_conf:            # keyword arguments for selected optimizer
     lr: 1            # learning rate
 scheduler: noamlr      # scheduler type
 scheduler_conf:        # keyword arguments for selected scheduler
-    model_size: 1536    # model size, a.k.a., attention dimension
-    warmup_steps: 4000 # the number of warmup steps
+    model_size: 128    # model size, a.k.a., attention dimension
+    warmup_steps: 100   # the number of warmup steps
 
 ##########################################################
 #                OTHER TRAINING SETTING                  #
 ##########################################################
-num_iters_per_epoch: 500  # number of iterations per epoch
-max_epoch: 1000            # number of epochs
-grad_clip: 1.0            # gradient clipping norm
-grad_noise: false         # whether to use gradient noise injection
+# num_iters_per_epoch: 500  # number of iterations per epoch
+max_epoch: 10000            # number of epochs
+grad_clip: 1            # gradient clipping norm
+grad_noise: False         # whether to use gradient noise injection
 accum_grad: 1             # gradient accumulation
 # batch_bins: 1800000      # batch bins (feats_type=raw)
 num_prosody_clusters: 5
-batch_bins: 17500      # batch bins (feats_type=raw)
-batch_type: numel         # how to make batch
+#batch_bins: 5000      # batch bins (feats_type=raw)
+batch_size: 10
+batch_type: sorted         # how to make batch
 sort_in_batch: descending # how to sort data in making batch
 sort_batch: descending    # how to sort created batches
 num_workers: 1            # number of workers of data loader
