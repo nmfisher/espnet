@@ -225,19 +225,24 @@ fi
 # b) we want control over the exact token<->ID mappings (e.g. if we want to use exactly the same mappings in some other model
 # this script expects the file data/symbol_ids.txt to exist, and copies to ${dump_dir/token_list/tokens.txt} prepending <blank> and appending <sos/eos>
 # symbol_ids.txt has one token per line, where the line number (zero-indexed) represents the symbol ID.
-src_tokens=data/symbol_ids.txt
-if [ ! -f $src_tokens ]; then 
-    echo "Source token file does not exist at $src_tokens" && exit -1;
-fi;
+# Check token list type
+token_listdir="${dumpdir}/token_list/${token_type}"
+if [ "${cleaner}" != none ]; then
+    token_listdir+="_${cleaner}"
+fi
+if [ "${token_type}" = phn ]; then
+    token_listdir+="_${g2p}"
+fi
+token_list="${token_listdir}/tokens.txt"
 
-mkdir -p "${dumpdir}/token_list"
-token_list="${dumpdir}/token_list/tokens.txt"
-rm -f $token_list
-echo $blank > $token_list
-cat $src_tokens >> $token_list
-echo "spn" >> $token_list
-echo $oov >> $token_list
-echo $sos_eos >> $token_list
+# Check old version token list dir existence
+if [ -e data/token_list ] && [ ! -e "${dumpdir}/token_list" ]; then
+    log "Default token_list directory path is changed from data to ${dumpdir}."
+    log "Copy data/token_list to ${dumpdir}/token_list for the compatibility."
+    [ ! -e ${dumpdir} ] && mkdir -p ${dumpdir}
+    cp -a "data/token_list" "${dumpdir}/token_list"
+fi
+
 
 _nj=1
 
@@ -439,63 +444,86 @@ if ! "${skip_data_prep}"; then
     fi
 
 
-    if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
-        log "Stage 3: Remove long/short data: ${data_feats}/org -> ${data_feats}"
+    # if [ ${stage} -le 3 ] && [ ${stop_stage} -ge 3 ]; then
+    #     log "Stage 3: Remove long/short data: ${data_feats}/org -> ${data_feats}"
 
-        # NOTE(kamo): Not applying to test_sets to keep original data
-        for dset in "${train_set}" "${valid_set}"; do
-            # Copy data dir
-            utils/copy_data_dir.sh "${data_feats}/org/${dset}" "${data_feats}/${dset}"
-            cp "${data_feats}/org/${dset}/feats_type" "${data_feats}/${dset}/feats_type"
-            if [ -e "${data_feats}/org/${dset}/utt2sid" ]; then
-                cp "${data_feats}/org/${dset}/utt2sid" "${data_feats}/${dset}/utt2sid"
-            fi
-            if [ -e "${data_feats}/org/${dset}/utt2lid" ]; then
-                cp "${data_feats}/org/${dset}/utt2lid" "${data_feats}/${dset}/utt2lid"
-            fi
+    #     # NOTE(kamo): Not applying to test_sets to keep original data
+    #     for dset in "${train_set}" "${valid_set}"; do
+    #         # Copy data dir
+    #         utils/copy_data_dir.sh "${data_feats}/org/${dset}" "${data_feats}/${dset}"
+    #         cp "${data_feats}/org/${dset}/feats_type" "${data_feats}/${dset}/feats_type"
+    #         if [ -e "${data_feats}/org/${dset}/utt2sid" ]; then
+    #             cp "${data_feats}/org/${dset}/utt2sid" "${data_feats}/${dset}/utt2sid"
+    #         fi
+    #         if [ -e "${data_feats}/org/${dset}/utt2lid" ]; then
+    #             cp "${data_feats}/org/${dset}/utt2lid" "${data_feats}/${dset}/utt2lid"
+    #         fi
 
-            # Remove short utterances
-            _fs=$($python -c "import humanfriendly as h;print(h.parse_size('${fs}'))")
-            _min_length=$($python -c "print(int(${min_wav_duration} * ${_fs}))")
-            _max_length=$($python -c "print(int(${max_wav_duration} * ${_fs}))")
+    #         # Remove short utterances
+    #         _fs=$($python -c "import humanfriendly as h;print(h.parse_size('${fs}'))")
+    #         _min_length=$($python -c "print(int(${min_wav_duration} * ${_fs}))")
+    #         _max_length=$($python -c "print(int(${max_wav_duration} * ${_fs}))")
 
-            # utt2num_samples is created by format_wav_scp.sh
-            <"${data_feats}/org/${dset}/utt2num_samples" \
-                awk -v min_length="${_min_length}" -v max_length="${_max_length}" \
-                    '{ if ($2 > min_length && $2 < max_length ) print $0; }' \
-                    >"${data_feats}/${dset}/utt2num_samples"
-            <"${data_feats}/org/${dset}/wav.scp" \
-                utils/filter_scp.pl "${data_feats}/${dset}/utt2num_samples"  \
-                >"${data_feats}/${dset}/wav.scp"
+    #         # utt2num_samples is created by format_wav_scp.sh
+    #         <"${data_feats}/org/${dset}/utt2num_samples" \
+    #             awk -v min_length="${_min_length}" -v max_length="${_max_length}" \
+    #                 '{ if ($2 > min_length && $2 < max_length ) print $0; }' \
+    #                 >"${data_feats}/${dset}/utt2num_samples"
+    #         <"${data_feats}/org/${dset}/wav.scp" \
+    #             utils/filter_scp.pl "${data_feats}/${dset}/utt2num_samples"  \
+    #             >"${data_feats}/${dset}/wav.scp"
 
-            # Remove empty text
-            <"${data_feats}/org/${dset}/text" \
-                awk ' { if( NF != 1 ) print $0; } ' >"${data_feats}/${dset}/text"
+    #         # Remove empty text
+    #         <"${data_feats}/org/${dset}/text" \
+    #             awk ' { if( NF != 1 ) print $0; } ' >"${data_feats}/${dset}/text"
 
-            # fix_data_dir.sh leaves only utts which exist in all files
-            _fix_opts=""
-            if [ -e "${data_feats}/org/${dset}/utt2sid" ]; then
-                _fix_opts="--utt_extra_files utt2sid "
-            fi
-            if [ -e "${data_feats}/org/${dset}/utt2lid" ]; then
-                _fix_opts="--utt_extra_files utt2lid "
-            fi
-            # shellcheck disable=SC2086
+    #         # fix_data_dir.sh leaves only utts which exist in all files
+    #         _fix_opts=""
+    #         if [ -e "${data_feats}/org/${dset}/utt2sid" ]; then
+    #             _fix_opts="--utt_extra_files utt2sid "
+    #         fi
+    #         if [ -e "${data_feats}/org/${dset}/utt2lid" ]; then
+    #             _fix_opts="--utt_extra_files utt2lid "
+    #         fi
+    #         # shellcheck disable=SC2086
 
-            utils/fix_data_dir.sh ${_fix_opts} "${data_feats}/${dset}"
+    #         utils/fix_data_dir.sh ${_fix_opts} "${data_feats}/${dset}"
 
-            # Filter x-vector
-            if "${use_xvector}"; then
-                cp "${dumpdir}/xvector/${dset}"/xvector.{scp,scp.bak}
-                <"${dumpdir}/xvector/${dset}/xvector.scp.bak" \
-                    utils/filter_scp.pl "${data_feats}/${dset}/wav.scp"  \
-                    >"${dumpdir}/xvector/${dset}/xvector.scp"
-            fi
-        done
+    #         # Filter x-vector
+    #         if "${use_xvector}"; then
+    #             cp "${dumpdir}/xvector/${dset}"/xvector.{scp,scp.bak}
+    #             <"${dumpdir}/xvector/${dset}/xvector.scp.bak" \
+    #                 utils/filter_scp.pl "${data_feats}/${dset}/wav.scp"  \
+    #                 >"${dumpdir}/xvector/${dset}/xvector.scp"
+    #         fi
+    #     done
+    # fi
+
+    if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
+        log "Stage 4: Generate token_list from ${srctexts}"
+        # "nlsyms_txt" should be generated by local/data.sh if need
+
+        # The first symbol in token_list must be "<blank>" and the last must be also sos/eos:
+        # 0 is reserved for CTC-blank for ASR and also used as ignore-index in the other task
+
+        # shellcheck disable=SC2002
+        cat ${srctexts} | awk ' { if( NF != 1 ) print $0; } ' >"${data_feats}/srctexts"
+
+        ${python} -m espnet2.bin.tokenize_text \
+              --token_type "${token_type}" -f 2- \
+              --input "${data_feats}/srctexts" --output "${token_list}" \
+              --non_linguistic_symbols "${nlsyms_txt}" \
+              --cleaner "${cleaner}" \
+              --g2p "${g2p}" \
+              --write_vocabulary true \
+              --add_symbol "${blank}:0" \
+              --add_symbol "${oov}:1" \
+              --add_symbol "${sos_eos}:-1"
     fi
 else
     log "Skip the stages for data preparation"
 fi
+
 # ========================== Data preparation is done here. ==========================
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
   ./scripts/feats/make_bfcc.sh --nj "${_nj}" ${data_feats}/${train_set}
@@ -505,7 +533,6 @@ fi
 if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
             _teacher_train_dir="${teacher_dumpdir}/${train_set}"
             _teacher_valid_dir="${teacher_dumpdir}/${valid_set}"
-
 
             _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/durations,durations,text_int "
             _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/durations,durations,text_int "
