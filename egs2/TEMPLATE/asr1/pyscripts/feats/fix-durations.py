@@ -16,7 +16,7 @@ from sklearn.cluster import KMeans
 from espnet2.layers.stft import Stft
 
 """
-There will occasionally be a slight mismatch between the number of frames in extracted BFCCs versus the number of frames in durations extracted via Kaldi alignment.
+There will occasionally be a slight mismatch between the number of frames in extracted features and the number of frames in the forced alignment.
 Usually this is only a single frame, and occurs due to differences in rounding between different toolkits.
 This script fixes this by adding/subtracting the frame difference from the first/last phone durations. These are usually SIL/SPN/etc so the difference is not noticeable.
 """
@@ -29,10 +29,10 @@ def get_parser():
     parser.add_argument("--verbose", "-V", default=0, type=int, help="Verbose option")
 
     parser.add_argument(
-        "train_feats", type=str, help="Path to train BFCCs data/train/feats.scp"
+        "train_feats", type=str, help="e.g. scp:data/train/feats.scp"
     )
     parser.add_argument(
-        "valid_feats", type=str, help="Path to validation BFCCs e.g. data/valid/feats.scp"
+        "valid_feats", type=str, help="e.g. scp:data/valid/feats.scp"
     )
     parser.add_argument(
         "train_durations", type=str, help="Path to train durations (frame lengths). e.g. data/train/durations"
@@ -45,17 +45,21 @@ def get_parser():
     )
     parser.add_argument(
         "valid_durations_out", type=str, help="Output path for fixed validation durations e.g. dump/raw/valid/durations"
+   )
+    parser.add_argument(
+        "odim", type=str, help="Output dimension (needed if feats is 1D but needs to be reshaped to 2D)"
     )
     return parser
 
-
-def fix(feats_file, durations_file, durations_out_file):
+def fix(feats_file, durations_file, durations_out_file, odim):
   with open(durations_out_file, "w") as dur_writer:
     print(f"Fixing durations based on feature file {feats_file} and durations file {durations_file}")
-    with ReadHelper("scp:" + feats_file) as feats_reader, ReadHelper("ark,t:" + durations_file) as dur_reader:
+    with ReadHelper(feats_file) as feats_reader, ReadHelper(durations_file) as dur_reader:
       for (utt_id, feats), (utt_id2, durations) in zip(feats_reader, dur_reader):
         if utt_id != utt_id2:
           raise Exception(f"Utterance ID mismatch in files {feats_file} and {durations_file} : {utt_id} vs {utt_id2}")
+        if len(feats.shape) == 1:
+            feats = feats.reshape(-1,odim)
         dsum = durations.sum()
         if dsum < feats.shape[0]:
           durations[-1] += (feats.shape[0] - dsum)
@@ -79,8 +83,8 @@ def main():
         logging.basicConfig(level=logging.WARN, format=logfmt)
     logging.info(get_commandline_args())
 
-    fix(args.train_feats, args.train_durations, args.train_durations_out)
-    fix(args.valid_feats, args.valid_durations, args.valid_durations_out)
+    fix(args.train_feats, args.train_durations, args.train_durations_out, int(args.odim))
+    fix(args.valid_feats, args.valid_durations, args.valid_durations_out, int(args.odim))
 
 
 if __name__ == "__main__":
