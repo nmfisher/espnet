@@ -30,38 +30,37 @@ def get_parser():
     return parser
 
 def prune(model):
-    return model #TODO
-    #     import torch.nn.utils.prune as prune
-    #     handled = []
-    #     modules = [model]
-    #     params = []
-    #     while len(modules) > 0:
-    #         module = modules.pop()
+#    return model #TODO
+     import torch.nn.utils.prune as prune
+     handled = []
+     modules = [model]
+     params = []
+     while len(modules) > 0:
+         module = modules.pop()
 
-    #         if module in handled:
-    #             print(f"{name} already handled, skipping")
-    #             continue
+         if module in handled:
+             print(f"{name} already handled, skipping")
+             continue
 
-    #         if len(list(module.named_children())) == 0:
-    #             for name, param in module.named_parameters():
-    #                 if name in ['bias']:
-    #                     params += [ (module, 'bias') ]
-    #                 elif name in ['weight']:
-    #                     params += [ (module, 'weight') ]
-    #         else:
-    #             modules += list([child for name, child in module.named_children()])
-    #         handled += [ module ] 
-            
-    #     if len(params) > 0:
-    #         print(f"Params for pruning : {params}")
-    #         # raise Exception()
-    #         prune.global_unstructured(
-    #             params,
-    #             pruning_method=prune.L1Unstructured,
-    #             amount=0.7,
-    #         )
-    #         for module, param in params:
-    #             prune.remove(module, param)
+         if len(list(module.named_children())) == 0:
+             for name, param in module.named_parameters():
+                 if name in ['bias']:
+                     params += [ (module, 'bias') ]
+                 elif name in ['weight']:
+                     params += [ (module, 'weight') ]
+         else:
+             modules += list([child for name, child in module.named_children()])
+         handled += [ module ] 
+       
+     if len(params) > 0:
+         print(f"Params for pruning : {params}")
+         prune.global_unstructured(
+             params,
+             pruning_method=prune.L1Unstructured,
+             amount=0.7,
+         )
+         for module, param in params:
+             prune.remove(module, param)
 
 if __name__ == "__main__":
     # Logger
@@ -100,8 +99,8 @@ if __name__ == "__main__":
     with torch.no_grad():
         
         model = tts.model.tts
-        # if args.prune:
-        #     model = prune(model)
+        if args.prune:
+            prune(model)
         
         model.eval()
         text = torch.tensor([0, 0, 0, 0, 0, 0],dtype=torch.long).to(device)
@@ -148,24 +147,24 @@ if __name__ == "__main__":
             input_names=[
                 'phones', 'speaker_id',  #'pitch', 'energy',# 'phone_word_mappings','style_reference','spembs' 
             ],
-            output_names=['pcm','durations'],
+            output_names=['feats','durations'],
             dynamic_axes={
                 'phones': {
                     0: 'length'
                 },
-                'pitch': {
-                    0: 'length'
-                },
-                'energy':{
-                    0: 'length'
-                },
+#                'pitch': {
+#                    0: 'length'
+#                },
+#                'energy':{
+#                    0: 'length'
+#                },
                 # 'style_reference': {
                 #     0: 'length'
                 # },
                 # 'phone_word_mappings':{
                 #     0: 'num_phones'
                 # },
-                'pcm': {
+                'feats': {
                     0: 'olen', 
                 },
                 'durations': {
