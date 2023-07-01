@@ -59,13 +59,11 @@ if __name__ == "__main__":
         model.eval()
 
         # text: torch.Tensor,
-        # durations: Optional[torch.Tensor] = None,
-        # pitch: Optional[torch.Tensor] = None,
         # sids: Optional[torch.Tensor] = None,
         inputs = (
             torch.zeros(1,10,dtype=torch.int).to(device), 
-            torch.zeros(1,10,dtype=torch.int).to(device),
-            torch.zeros(1,10,dtype=torch.int).to(device),
+            # torch.zeros(1,10,dtype=torch.int).to(device),
+            # torch.zeros(1,10,dtype=torch.int).to(device),
             torch.zeros(1,1,dtype=torch.long).to(device),
         )
 
@@ -91,7 +89,7 @@ if __name__ == "__main__":
             opset_version=13,
             do_constant_folding=False,
             verbose=True,
-            input_names=['phones', 'durations', 'pitch',  'sids' ],
+            input_names=['phones', 'sids' ],
             output_names=['pcm','att_ws'],
             dynamic_axes={
                 'phones': {
