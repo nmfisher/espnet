@@ -17,6 +17,9 @@ import torch.nn.functional as F
 import time
 import torch.nn.utils.prune as prune
 
+from espnet.nets.pytorch_backend.transformer.positionwise_feed_forward import (
+    PositionwiseFeedForward,  # noqa: H301
+)
 
 from espnet.nets.pytorch_backend.hqss.speaker_classifier import SpeakerClassifier
 
@@ -218,9 +221,12 @@ class WLSC(AbsTTS):
         encoder_dropout_rate:Optional[float]=0.1,
         encoder_positional_dropout_rate:Optional[float]=0.1,
         encoder_attention_dropout_rate:Optional[float]=0.1,
-        encoder_conv_kernel_size:Optional[int]=3, 
+        encoder_conv_kernel_size:Optional[int]=3,
+        encoder_positionwise_conv_kernel_size=21,
         encoder_positionwise_layer_type="conv1d",
         encoder_use_cnn_module=False,
+        encoder_macaron_style=False,
+        encoder_cnn_module_kernel=3,
         style_encoder_aheads:Optional[int]=2,
         decoder_adim:Optional[int]=1024,
         decoder_aheads:Optional[int]=2,
@@ -229,7 +235,8 @@ class WLSC(AbsTTS):
         decoder_positional_dropout_rate:Optional[float]=0.1,
         decoder_attention_dropout_rate:Optional[float]=0.1,
         decoder_positionwise_layer_type="conv1d", 
-        decoder_positionwise_conv_kernel_size=3,
+        decoder_positionwise_conv_kernel_size=21,
+        decoder_macaron_style=False,
         decoder_use_cnn_module=False,
         decoder_linear_units=2048,
         decoder_cnn_module_kernel=31,
@@ -312,7 +319,7 @@ class WLSC(AbsTTS):
         #     dropout=word_seq_encoder_dropout)
 
         self.enc = ConformerEncoder(
-            idim=idim,
+            idim=phone_embed_dim,
             attention_dim=encoder_adim,
             attention_heads=encoder_aheads,
             num_blocks=encoder_numblocks,
@@ -322,14 +329,15 @@ class WLSC(AbsTTS):
             input_layer=encoder_input_layer,
             linear_units=encoder_linear_units,
             positionwise_layer_type=encoder_positionwise_layer_type,
-            positionwise_conv_kernel_size=encoder_conv_kernel_size, 
+            positionwise_conv_kernel_size=encoder_positionwise_conv_kernel_size, 
             pos_enc_layer_type="rel_pos",   
             selfattention_layer_type="rel_selfattn", 
             activation_type="swish",             
-            macaron_style=False,
+            macaron_style=encoder_macaron_style,
             use_cnn_module=encoder_use_cnn_module,
-            cnn_module_kernel=7
+            cnn_module_kernel=encoder_cnn_module_kernel
         )
+        self.enc_proj = torch.nn.Linear(encoder_adim, decoder_adim)
         # self.word_seq_proj_dim = word_seq_proj_dim
         # self.word_seq_proj = torch.nn.Linear(self.word_seq_embedding_dim, self.word_seq_proj_dim)
         # self.style_token_dim = style_token_dim
@@ -338,7 +346,7 @@ class WLSC(AbsTTS):
         self.decoder_adim = decoder_adim
 
         self.dec = ConformerEncoder(
-            idim=0,
+            idim=encoder_adim,
             attention_dim=decoder_adim,
             attention_heads=decoder_aheads,
             input_layer=None,
@@ -348,18 +356,39 @@ class WLSC(AbsTTS):
             positional_dropout_rate=decoder_positional_dropout_rate,
             attention_dropout_rate=decoder_attention_dropout_rate,
             positionwise_layer_type=decoder_positionwise_layer_type,
-            positionwise_conv_kernel_size=decoder_positionwise_conv_kernel_size, 
+            positionwise_conv_kernel_size=31, 
             pos_enc_layer_type="rel_pos",   
             selfattention_layer_type="rel_selfattn", 
             activation_type="swish",             
-            macaron_style=False,
+            macaron_style=decoder_macaron_style,
             use_cnn_module=decoder_use_cnn_module,
-            cnn_module_kernel=3#decoder_cnn_module_kernel,
+            cnn_module_kernel=decoder_cnn_module_kernel,
         )
+        # self.dec2 = ConformerEncoder(
+        #     idim=encoder_adim,
+        #     attention_dim=decoder_adim,
+        #     attention_heads=decoder_aheads,
+        #     input_layer=None,
+        #     num_blocks=decoder_numblocks,
+        #     dropout_rate=decoder_dropout_rate,
+        #     linear_units=decoder_linear_units,
+        #     positional_dropout_rate=decoder_positional_dropout_rate,
+        #     attention_dropout_rate=decoder_attention_dropout_rate,
+        #     positionwise_layer_type=decoder_positionwise_layer_type,
+        #     positionwise_conv_kernel_size=decoder_positionwise_conv_kernel_size, 
+        #     pos_enc_layer_type="rel_pos",   
+        #     selfattention_layer_type="rel_selfattn", 
+        #     activation_type="swish",             
+        #     macaron_style=False,
+        #     use_cnn_module=decoder_use_cnn_module,
+        #     cnn_module_kernel=decoder_cnn_module_kernel,
+        # )
         concat_dim = self.phone_embed_dim # + spk_embed_dim + self.pitch_embed_dim  + self.energy_embed_dim  #+ self.word_seq_embedding_dim +  # + self.style_token_dim
         # self.prior = PriorEncoder(idim=self.phone_embed_dim + self.word_seq_embedding_dim * 2, gru_units=self.style_token_dim,gru_layers=prior_layers)
 
-        self.feat_out = torch.nn.Linear(decoder_adim, odim)
+        # self.dec_to_codebook = torch.nn.ModuleList([PositionwiseFeedForward(decoder_adim,512,dropout_rate=0.05) for _ in range(self.odim)])
+
+        self.feat_out = torch.nn.Linear(decoder_adim, self.odim)
 
         # define duration predictor
         self.duration_predictor = DurationPredictor(
@@ -382,34 +411,34 @@ class WLSC(AbsTTS):
         self.length_regulator = GaussianUpsampler()
 
         self.postnet = Postnet(
-                idim=20,
-                odim=odim,
+                idim=odim*1024,
+                odim=odim*1024,
                 n_layers=postnet_layers,
                 n_chans=postnet_chans,
                 n_filts=postnet_filts,
                 use_batch_norm=True,
                 dropout_rate=postnet_dropout,
-        )
-        
+        ) 
+
         self.criterion = WLSCLoss(
-            use_masking=True, use_weighted_masking=False
+            use_weighted_masking=True
         )
 
-        for c in [ 
-            # self.spk_embed, 
-            #self.speaker_emb_predictor,
-            self.duration_predictor, 
-            self.range_predictor, 
-            #self.prior, 
-            self.feat_out, 
-            self.enc, 
-            self.dec, 
+#        for c in [ 
+#            # self.spk_embed, 
+#            #self.speaker_emb_predictor,
+#            self.duration_predictor, 
+#            self.range_predictor, 
+#            #self.prior, 
+#            self.feat_out, 
+#            self.enc, 
+#            self.dec, 
             #self.word_style_encoder, 
             # self.word_seq_enc, 
             # self.word_seq_proj 
-            ]:
-            pytorch_total_params = sum(p.numel() for p in c.parameters())
-            print(f"params for {type(c).__name__} : {pytorch_total_params}")
+#            ]:
+#            pytorch_total_params = sum(p.numel() for p in c.parameters())
+#            print(f"params for {type(c).__name__} : {pytorch_total_params}")
         # self.proj_up_down = proj_up_down
         
     # embeddings are phonetic token embeddings, BxLpxE
@@ -551,7 +580,7 @@ class WLSC(AbsTTS):
         """
         batch_size = text.size(0)
         text = text[:, : text_lengths.max()]  # for data-parallel
-        feats = feats[:, : feats_lengths.max()]  # for data-parallel
+        feats = feats[:, : feats_lengths.max()] #.long().flatten(1,2)  
         
         durations = durations[:, : durations_lengths.max() ]
 
@@ -561,7 +590,7 @@ class WLSC(AbsTTS):
         #     xs[i, l] = self.eos
         # ilens = (text_lengths + 1).type(torch.float32)
         ilens = text_lengths
-        durations_lengths = ilens
+
         # durations = F.pad(durations, [0, 1], "constant", 0)
         # pitch = F.pad(pitch, [0, 1], "constant", 0)
 
@@ -595,10 +624,7 @@ class WLSC(AbsTTS):
         # word_enc_out, _ = self.word_seq_enc(phone_enc_averaged.detach())
         
         # prior_out = self.prior(phone_enc_averaged.detach(), word_enc_out.detach())  
-        print(phone_enc.size())
-        print(spembs.size())
-        #print(pitch_embs.size())
-        #print(energy_embs.size())
+        
         concatenated = phone_enc #torch.cat([
             #phone_enc, 
          #   spembs.expand(-1,phone_enc.size(1), -1), 
@@ -626,18 +652,33 @@ class WLSC(AbsTTS):
         
         h_masks = self._source_mask(feats_lengths)        
         
-        zs, _ = self.dec(upsampled, h_masks)  # (B, T_feats, adim)
+        zs, _ = self.dec(self.enc_proj(upsampled), h_masks)  # (B, T_feats, adim)
+        
+        # zs2, _ = self.dec2(self.enc_proj(upsampled), h_masks)  # (B, T_feats, adim)
+        # zs =  torch.stack([zs, zs2], dim=2)
 
-        before_outs = self.feat_out(zs).view(
-            zs.size(0), -1, self.odim
-        )  # (B, T_feats, odim)
+        # outs = []
+        # for i, layer in enumerate(self.dec_to_codebook):
+        #     if i == 0:
+        #         outs += [layer(zs)]
+        #     else:
+        #         outs += [layer(zs + outs[-1])]
+        # before_outs = self.feat_out(torch.stack(outs,dim=2))
+        before_outs = self.feat_out(zs)
+        
+        # after_outs = before_outs + self.postnet(
+        #    before_outs.transpose(1, 2)
+        # ).transpose(1, 2)
 
-        after_outs = before_outs + self.postnet(
-            before_outs.transpose(1, 2)
-        ).transpose(1, 2)
-
-        l1_loss, duration_loss  = self.criterion(  #, prior_loss, spk_loss
-            after_outs=after_outs,
+        # before_outs = before_outs.view(
+        #     zs.size(0), -1, 1024
+        # )
+        
+        # after_outs = after_outs.view(
+        #     zs.size(0), -1, self.odim, 1024
+        # )  # (B, T_feats, odim)
+        before_loss, after_loss, duration_loss  = self.criterion(  #, prior_loss, spk_loss
+            after_outs=None, #after_outs,
             before_outs=before_outs,
             # word_style_enc=word_style_enc,
             # prior_out=prior_out,
@@ -651,10 +692,12 @@ class WLSC(AbsTTS):
             #spk_emb_preds=spk_emb_preds,
             #spk_embs=spembs
         )
-        loss = duration_loss + l1_loss #+ prior_loss + spk_loss
-
+        loss = duration_loss + before_loss #+ prior_loss + spk_loss
+        if after_loss is not None:
+            loss += after_loss 
         stats = dict(
-            l1_loss=l1_loss.item(),
+            before_loss=before_loss.item(),
+            after_loss=after_loss.item() if after_loss is not None else None,
             duration_loss=duration_loss.item(),
             # prior_loss=prior_loss.item(),
             # spk_loss=spk_loss.item()
@@ -795,6 +838,7 @@ class WLSC(AbsTTS):
         # add eos at the last of sequence
         # text = F.pad(text, [0, 1], "constant", float(self.eos))
         ilens = torch.tensor([text.size(0)])
+
         
         # durations = F.pad(durations, [0, 1], "constant", 0)
         # pitch = F.pad(pitch, [0, 1], "constant", 0)
@@ -871,20 +915,48 @@ class WLSC(AbsTTS):
         #upsampled = self.length_regulator(concatenated, torch.zeros(r_outs.size()), durations.unsqueeze(0))  # (B, T_feats, adim)
         
         h_masks = torch.ones(1, upsampled.size(1), dtype=torch.bool).to(concatenated.device)
+
+        zs, _ = self.dec(self.enc_proj(upsampled), h_masks)  # (B, T_feats, adim)
+        # zs2, _ = self.dec2(self.enc_proj(upsampled), h_masks)  # (B, T_feats, adim)
+        # zs =  torch.stack([zs, zs2], dim=2)
+               
+        after_outs = self.feat_out(zs)
         
-        zs, _ = self.dec(upsampled,h_masks)  # (B, T_feats, adim)
+        # after_outs = after_outs.reshape(
+        #     zs.size(0), -1, 1024
+        # ).argmax(-1)
+        
+        # outs = []
+        # for i, layer in enumerate(self.dec_to_codebook):
+        #     if i == 0:
+        #         outs += [layer(zs)]
+        #     else:
+        #         outs += [layer(zs + outs[-1])]
+        # after_outs = self.feat_out(torch.stack(outs,dim=2))
+
+    #    after_outs = before_outs + self.postnet(
+    #        before_outs.transpose(1, 2)
+    #    ).transpose(1, 2)
 
         # if self.proj_up_down:
         #     zs = self.dec_proj_down(self.dec_proj_up(zs))
-                
-        before_outs = self.feat_out(zs).view(
-            zs.size(0), -1, self.odim
-        )  # (B, T_feats, odim)
-
-        after_outs = before_outs + self.postnet(
-            before_outs.transpose(1, 2)
-        ).transpose(1, 2)
+       
+        #after_outs = self.postnet(
+        #    before_outs.transpose(1, 2)
+        #).transpose(1, 2)
         
+        #after_outs = after_outs.view(
+        #    zs.size(0), -1, self.odim, 16
+        #)  # (B, T_feats, odim)
+
+        # after_outs = before_outs.view(
+        #     zs.size(0), -1, self.odim, 1024
+        # ) + self.postnet(
+        #    before_outs.transpose(1, 2)
+        # ).transpose(1, 2).view(
+        #    zs.size(0), -1, self.odim, 1024
+        # )
+
         return after_outs, d_outs
         
     @torch.jit.ignore
