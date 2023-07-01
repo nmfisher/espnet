@@ -46,7 +46,7 @@ python=python3       # Specify python to execute espnet commands.
 local_data_opts="" # Options to be passed to local/data.sh.
 
 # Feature extraction related
-feats_type=wlsc             # Input feature type.
+feats_type=lpcnet             # Input feature type.
 audio_format=wav          # Audio format: wav, flac, wav.ark, flac.ark  (only in feats_type=raw).
 min_wav_duration=0.1       # Minimum duration in second.
 max_wav_duration=20        # Maximum duration in second.
@@ -63,7 +63,6 @@ n_mels=80                  # The number of mel basis.
 f0min=80  # Maximum f0 for pitch extraction.
 f0max=400 # Minimum f0 for pitch extraction.
 
-odim=20
 
 # Vocabulary related
 oov="<unk>"         # Out of vocabrary symbol.
@@ -210,12 +209,25 @@ fi
 . ./cmd.sh
 
 # Check feature type
-if [ "${feats_type}" = raw ]; then
+if [ "${feats_type}" = "raw" ]; then
     data_feats="${dumpdir}/raw"
-elif [ "${feats_type}" = bfcc ]; then
+elif [ "${feats_type}" = lyra ]; then
+    data_feats="${dumpdir}/raw"      
+    odim=30
+    feats_file="feats.scp"
+    feats_filetype="kaldi_ark"
+elif [ "${feats_type}" = "lpcnet" ]; then
+    odim=20
+    feats_file="feats.scp"
+    feats_filetype="kaldi_ark"
     data_feats="${dumpdir}/raw"    
-elif [ "${feats_type}" = wlsc ]; then
+elif [ "${feats_type}" = "wlsc" ]; then
     data_feats="${dumpdir}/raw"    
+elif [ "${feats_type}" = "encodec" ]; then
+    data_feats="${dumpdir}/raw"
+    odim=2    
+    feats_file="feats.scp"
+    feats_filetype="kaldi_ark"
 else
     log "${help_message}"
     log "Error: only supported: --feats_type raw"
@@ -447,8 +459,16 @@ else
 fi
 # ========================== Data preparation is done here. ==========================
 if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
-  ./scripts/feats/make_bfcc.sh --nj "${_nj}" ${data_feats}/${train_set} || exit -1;
-  ./scripts/feats/make_bfcc.sh --nj "${_nj}" ${data_feats}/${valid_set} || exit -1;
+
+    if [ $feats_type == "lpcnet" ]; then
+        feat_script="make_lpcnet_feats.sh";
+    elif [ $feats_type == "lyra" ]; then
+        feat_script="make_lyra_feats.sh";
+    elif [ $feats_type == "encodec" ]; then
+        feat_script="make_encodec_feats.sh";
+    fi
+    ./scripts/feats/$feat_script --nj "${_nj}" ${data_feats}/${train_set} || exit -1;
+    ./scripts/feats/$feat_script --nj "${_nj}" ${data_feats}/${valid_set} || exit -1;
 fi
 
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
@@ -457,33 +477,31 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
 
         ./utils/filter_scp.pl "${data_feats}/${train_set}/wav.scp" ${_teacher_train_dir}/durations > ${data_feats}/${train_set}/durations
         ./utils/filter_scp.pl "${data_feats}/${valid_set}/wav.scp" ${_teacher_valid_dir}/durations > ${data_feats}/${valid_set}/durations
-#        cp ${_teacher_train_dir}/durations  ${data_feats}/${train_set}/durations
-#        cp ${_teacher_valid_dir}/durations  ${data_feats}/${valid_set}/durations
-        # with hop_length=160, sample rate = 16000, frame length is 10ms, so multiply durations in seconds by 100 to get duration in frames
-         
-        cat ${data_feats}/${train_set}/durations | awk -F' ' '{printf "%s ",$1; for(i=2;i<=NF;i++) { printf "%d ",$i*100;} printf "\n"}' > ${data_feats}/${train_set}/durations_int
-        cat ${data_feats}/${valid_set}/durations | awk -F' ' '{printf "%s ",$1; for(i=2;i<=NF;i++) { printf "%d ",$i*100;} printf "\n"}' > ${data_feats}/${valid_set}/durations_int
 
+        # LPCNet uses hop_length=160, sample rate = 16000
+        # so frame length is 10ms, effective framerate = 100Hz
+        if [ $feats_type == "lpcnet" ]; then
+            factor=100
+        elif [ $feats_type == "lyra" ]; then
+        # Lyra 50Hz features
+            factor=50
+        elif [ $feats_type == "encodec" ]; then
+        # Encodec 24khz model is 75Hz
+            factor=150 # 75
+        fi
+
+        python ./pyscripts/feats/convert_second_to_frame_alignments.py ark,t:${data_feats}/${train_set}/durations scp:${data_feats}/${train_set}/feats.scp scp,ark,t:${data_feats}/${train_set}/durations.scp,${data_feats}/${train_set}/durations.ark $factor 
+        python ./pyscripts/feats/convert_second_to_frame_alignments.py ark,t:${data_feats}/${valid_set}/durations scp:${data_feats}/${valid_set}/feats.scp scp,ark,t:${data_feats}/${valid_set}/durations.scp,${data_feats}/${valid_set}/durations.ark $factor 
+        
         ./utils/fix_data_dir.sh "${data_feats}/${train_set}"
         ./utils/fix_data_dir.sh "${data_feats}/${valid_set}"
-
-        ./scripts/feats/fix_durations.sh \
-                ${data_feats}/${train_set}/feats.scp \
-                ${data_feats}/${valid_set}/feats.scp \
-                ${data_feats}/${train_set}/durations_int \
-                "${data_feats}/${train_set}/durations_fixed" \
-                ${data_feats}/${valid_set}/durations_int \
-                "${data_feats}/${valid_set}/durations_fixed"
-
-       mv "${data_feats}/${train_set}/durations_fixed" "${data_feats}/${train_set}/durations"
-       mv "${data_feats}/${valid_set}/durations_fixed" "${data_feats}/${valid_set}/durations"
 fi
 
-if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
-    for dset in "${train_set}" "${valid_set}"; do
-        ./scripts/feats/extract_f0.sh --nj ${nj} ${data_feats}/${dset} ${f0min} ${f0max} 
-    done
-fi
+# if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
+    # for dset in "${train_set}" "${valid_set}"; do
+    #     ./scripts/feats/extract_f0.sh --nj ${nj} ${data_feats}/${dset} ${f0min} ${f0max} 
+    # done
+# fi
 
 num_prosody_clusters=$(grep "num_prosody_clusters" ${train_config} | sed "s/[^0-9+]//g");
 
@@ -492,10 +510,10 @@ num_prosody_clusters=$(grep "num_prosody_clusters" ${train_config} | sed "s/[^0-
     # ./scripts/normalize_f0.sh ${data_feats}/${train_set} ${data_feats}/${valid_set} 
 #fi
 
-if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ]; then
+if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ] && [ ${feats_type} == "lpcnet" ]; then
     log "Stage 7: Averaging BFCCs per word"
-    ./utils/filter_scp.pl ${data_feats}/${train_set}/feats.scp data/${train_set}/phone_word_mappings > ${data_feats}/${train_set}/phone_word_mappings
-    ./utils/filter_scp.pl ${data_feats}/${valid_set}/feats.scp data/${valid_set}/phone_word_mappings > ${data_feats}/${valid_set}/phone_word_mappings
+    ./utils/filter_scp.pl ${data_feats}/${train_set}/${feats_file} data/${train_set}/phone_word_mappings > ${data_feats}/${train_set}/phone_word_mappings
+    ./utils/filter_scp.pl ${data_feats}/${valid_set}/${feats_file} data/${valid_set}/phone_word_mappings > ${data_feats}/${valid_set}/phone_word_mappings
     ./scripts/feats/average_feats.sh --nj "${_nj}" ${data_feats}/${train_set}
     ./scripts/feats/average_feats.sh --nj "${_nj}" ${data_feats}/${valid_set}
 fi
@@ -513,8 +531,8 @@ if ! "${skip_train}"; then
             _opts+="--config ${train_config} "
         fi
 
-        _scp=feats.scp
-        _type=kaldi_ark
+        _scp=$feats_file
+        _type=$feats_filetype
 
         # _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/durations,durations,kaldi_ark "
         # _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/durations,durations,kaldi_ark "
@@ -591,8 +609,8 @@ if ! "${skip_train}"; then
                 --train_data_path_and_name_and_type "${_train_dir}/${_scp},speech,${_type}" \
                 --valid_data_path_and_name_and_type "${_valid_dir}/text,text,text" \
                 --valid_data_path_and_name_and_type "${_valid_dir}/${_scp},speech,${_type}" \
-                --train_data_path_and_name_and_type "${_train_dir}/durations,durations,text_int " \
-                --valid_data_path_and_name_and_type "${_valid_dir}/durations,durations,text_int " \
+                --train_data_path_and_name_and_type "${_train_dir}/durations.scp,durations,kaldi_ark " \
+                --valid_data_path_and_name_and_type "${_valid_dir}/durations.scp,durations,kaldi_ark " \
                 --train_shape_file "${_logdir}/train.JOB.scp" \
                 --valid_shape_file "${_logdir}/valid.JOB.scp" \
                 --output_dir "${_logdir}/stats.JOB" \
@@ -653,11 +671,11 @@ if ! "${skip_train}"; then
         _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/text,text,text "
         _opts+="--valid_shape_file ${tts_stats_dir}/valid/text_shape.${token_type} "
 
-        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/feats.scp,speech,kaldi_ark "
-        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/feats.scp,speech,kaldi_ark "
+        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/${feats_file},speech,${feats_filetype} "
+        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/${feats_file},speech,${feats_filetype} "
 
-        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/durations,durations,text_int "
-        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/durations,durations,text_int "
+        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/durations.scp,durations,kaldi_ark "
+        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/durations.scp,durations,kaldi_ark "
         # _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/pitch,pitch,npy "
         # _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/pitch,pitch,npy "
         # _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/energy,energy,npy "
@@ -677,7 +695,7 @@ if ! "${skip_train}"; then
 
         if [ -e ${_teacher_train_dir}/probs ]; then
             # Knowledge distillation case: use the outputs of the teacher model as the target
-            _scp=feats.scp
+            _scp=$feats_file
             _type=npy
         else
             # Teacher forcing case: use groundtruth as the target
@@ -781,7 +799,7 @@ if ! "${skip_eval}"; then
             _opts+="--config ${inference_config} "
         fi
 
-        _scp=feats.scp
+        _scp=$feats_file
         # if [[ "${audio_format}" == *ark* ]]; then
             _type=kaldi_ark
         # else
@@ -803,7 +821,7 @@ if ! "${skip_eval}"; then
             if [ -n "${teacher_dumpdir}" ]; then
                 # Use groundtruth of durations
                 _teacher_dir="${teacher_dumpdir}/${dset}"
-                _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/durations,durations,text_int "
+                _opts+="--data_path_and_name_and_type ${data_feats}/${dset}/durations.scp,durations,kaldi_ark "
 #                _opts+="--data_path_and_name_and_type ${_data}/pitch_clusters.scp,pitch,kaldi_ark "
 #                _opts+="--data_path_and_name_and_type ${_data}/energy_clusters.scp,energy,kaldi_ark "
             fi
@@ -997,7 +1015,7 @@ if [ ${stage} -le 12 ] && [ ${stop_stage} -ge 12 ]; then
 
     if [ -e ${_teacher_train_dir}/probs ]; then
         # Knowledge distillation case: use the outputs of the teacher model as the target
-        _scp=feats.scp
+        _scp=$feats_file
         _type=npy
     else
         # Teacher forcing case: use groundtruth as the target
@@ -1075,7 +1093,7 @@ if [ ${stage} -le 13 ] && [ ${stop_stage} -ge 13 ]; then
         _opts+="--config ${inference_config} "
     fi
 
-    _scp=feats.scp
+    _scp=$feats_file
     # if [[ "${audio_format}" == *ark* ]]; then
         _type=kaldi_ark
     # else
