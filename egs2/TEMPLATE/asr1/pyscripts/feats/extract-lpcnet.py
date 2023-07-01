@@ -52,9 +52,8 @@ def main():
                         pcm_out.write(audio)
                         process = subprocess.run(['lpcnet_demo', '-features', pcm_out.name, feats_out.name])
                         feats = np.fromfile(feats_out.name, dtype=np.float32).reshape(-1,36)
+                        print(f"Wrote {feats.shape[0]} frames for {utt_id}")
                         writer(utt_id, feats[:,:20])
-                        print(f"Wrote to feats file {feats_out.name}")
-
 
 if __name__ == "__main__":
     main()

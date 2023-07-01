@@ -35,18 +35,18 @@ else
   logdir=${data}/log
 fi
 if [ $# -ge 3 ]; then
-  bfccdir=$3
+  featdir=$3
 else
-  bfccdir=${data}/data
+  featdir=${data}/data
 fi
 
-# make $bfccdir an absolute pathname.
-bfccdir=$(perl -e '($dir,$pwd)= @ARGV; if($dir!~m:^/:) { $dir = "$pwd/$dir"; } print $dir; ' ${bfccdir} ${PWD})
+# make $featdir an absolute pathname.
+featdir=$(perl -e '($dir,$pwd)= @ARGV; if($dir!~m:^/:) { $dir = "$pwd/$dir"; } print $dir; ' ${featdir} ${PWD})
 
 # use "name" as part of name of the archive.
 name=$(basename ${data})
 
-mkdir -p ${bfccdir} || exit 1;
+mkdir -p ${featdir} || exit 1;
 mkdir -p ${logdir} || exit 1;
 
 if [ -f ${data}/feats.scp ]; then
@@ -75,12 +75,12 @@ done
 
 utils/split_scp.pl ${scp} ${split_scps}
 
-${cmd} JOB=1:${nj} ${logdir}/make_bfcc_${name}.JOB.log \
-    pyscripts/feats/compute-bfcc.py scp:${logdir}/wav.JOB.scp ark,scp:${bfccdir}/raw_bfcc_${name}.JOB.${ext},${bfccdir}/raw_bfcc_${name}.JOB.scp $sample_rate
+${cmd} JOB=1:${nj} ${logdir}/make_lpcnet_${name}.JOB.log \
+    pyscripts/feats/extract-lpcnet.py scp:${logdir}/wav.JOB.scp ark,scp:${featdir}/lpcnet_${name}.JOB.${ext},${featdir}/lpcnet_${name}.JOB.scp $sample_rate
 
 # concatenate the .scp files together.
 for n in $(seq ${nj}); do
-    cat ${bfccdir}/raw_bfcc_${name}.${n}.scp || exit 1;
+    cat ${featdir}/lpcnet_${name}.${n}.scp || exit 1;
 done > ${data}/feats.scp || exit 1
 
 rm -f ${logdir}/wav.*.scp  2>/dev/null
@@ -92,5 +92,5 @@ if [ ${nf} -ne ${nu} ]; then
     echo "consider using utils/fix_data_dir.sh $data"
 fi
 
-echo "Succeeded creating BFCC features for $name"
+echo "Succeeded creating LPCNet features for $name"
 
