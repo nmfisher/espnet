@@ -17,7 +17,7 @@ from espnet.nets.pytorch_backend.tacotron2.utils import make_non_pad_mask
 class WLSCLoss(torch.nn.Module):
     """Loss function module for WLSC."""
 
-    def __init__(self, use_masking: bool = True, use_weighted_masking: bool = False):
+    def __init__(self, use_weighted_masking: bool = False):
         """Initialize feed-forward Transformer loss module.
 
         Args:
@@ -30,15 +30,14 @@ class WLSCLoss(torch.nn.Module):
         assert check_argument_types()
         super().__init__()
 
-        assert (use_masking != use_weighted_masking) or not use_masking
-        self.use_masking = use_masking
         self.use_weighted_masking = use_weighted_masking
 
         # define criterions
-        reduction = "none" if self.use_weighted_masking else "mean"
+        reduction = "none" #if self.use_weighted_masking else "none"
         self.l1_criterion = torch.nn.L1Loss(reduction=reduction)
         self.prior_l1_criterion = torch.nn.L1Loss(reduction=reduction)
         self.mse_criterion = torch.nn.MSELoss(reduction=reduction)
+        self.huber_criterion = torch.nn.HuberLoss(reduction=reduction)
         self.duration_criterion = DurationPredictorLoss(reduction=reduction)
 
     def forward(
@@ -56,7 +55,7 @@ class WLSCLoss(torch.nn.Module):
         # spk_class: torch.Tensor,
         #spk_emb_preds: torch.Tensor,
         #spk_embs: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor ]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor ]:
         """Calculate forward propagation.
 
         Args:
@@ -77,41 +76,39 @@ class WLSCLoss(torch.nn.Module):
             Tensor: Energy predictor loss value.
 
         """
-        # apply mask to remove padded part
-        if self.use_masking:
-            out_masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
+        after_loss :  Optional[torch.Tensor] = None
+        if ys.dtype == torch.float:
+            # apply mask to remove padded part
+            out_masks = make_non_pad_mask(olens).to(ys.device).unsqueeze(-1)
             before_outs = before_outs.masked_select(out_masks)
             if after_outs is not None:
                 after_outs = after_outs.masked_select(out_masks)
             ys = ys.masked_select(out_masks)
             duration_masks = make_non_pad_mask(ilens).to(ys.device)
             d_outs = d_outs.masked_select(duration_masks)
-            ds = ds.masked_select(duration_masks)
-        
-        # spk_loss = torch.nn.functional.cross_entropy(spk_class, sids.squeeze(1))
-        #spk_loss = torch.nn.functional.mse_loss(spk_emb_preds, spk_embs.squeeze(1))
+            ds = ds.masked_select(duration_masks)    
+            before_loss = self.huber_criterion(before_outs, ys)
+            if after_outs is not None:
+                after_loss = self.huber_criterion(after_outs, ys)
+            # spk_loss = torch.nn.functional.cross_entropy(spk_class, sids.squeeze(1))
+            #spk_loss = torch.nn.functional.mse_loss(spk_emb_preds, spk_embs.squeeze(1))
 
-        # calculate loss
-        l1_loss = self.l1_criterion(before_outs, ys)
-        if after_outs is not None:
-            l1_loss += self.l1_criterion(after_outs, ys)
-        duration_loss = self.duration_criterion(d_outs, ds)
+            # calculate loss
+        elif ys.dtype ==  torch.int64 or ys.dtype == torch.int32:
+            out_masks = make_non_pad_mask(olens).to(ys.device)
+            before_loss = torch.nn.functional.cross_entropy(before_outs.permute(0,2,1), ys, reduction='none')
+            before_loss[~out_masks] = 0
+            if after_outs is not None:
+                after_loss = torch.nn.functional.cross_entropy(after_outs.permute(0,2,1), ys,reduction='none')
+                after_loss[~out_masks] = 0
+        else:
+            raise Exception("Unknown target dtype : " + str(ys.dtype))
+        duration_loss = self.duration_criterion(d_outs, ds).mean()
 
         # make weighted mask and apply it
-        if self.use_weighted_masking:
-            out_masks = make_non_pad_mask(olens).unsqueeze(-1).to(ys.device)
-            out_weights = out_masks.float() / out_masks.sum(dim=1, keepdim=True).float()
-            out_weights /= ys.size(0) * ys.size(2)
-            duration_masks = make_non_pad_mask(ilens).to(ys.device)
-            duration_weights = (
-                duration_masks.float() / duration_masks.sum(dim=1, keepdim=True).float()
-            )
-            duration_weights /= ds.size(0)
-
-            # apply weight
-            l1_loss = l1_loss.mul(out_weights).masked_select(out_masks).sum()
-            duration_loss = (
-                duration_loss.mul(duration_weights).masked_select(duration_masks).sum()
-            )
-        # prior_loss = self.prior_l1_criterion(prior_out, word_style_enc)
-        return l1_loss, duration_loss, # spk_loss  prior_loss, 
+        # if self.use_weighted_masking:
+            # out_weights = torch.pow(0.5, torch.arange(ys.size(-1))).to(ys.device)
+            # before_loss = before_loss.mul(out_weights)
+        # feat_loss = feat_loss.sum()
+        #  prior_loss = self.prior_l1_criterion(prior_out, word_style_enc)
+        return before_loss.mean(), after_loss.sum() if after_loss is not None else None, duration_loss, # spk_loss  prior_loss, 
