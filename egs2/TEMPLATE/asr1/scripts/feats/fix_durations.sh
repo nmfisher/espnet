@@ -25,7 +25,7 @@ echo "$0 $*" 1>&2 # Print the command line for logging
 
 . parse_options.sh || exit 1;
 
-if [ $# -lt 2 ] || [ $# -gt 6 ]; then
+if [ $# -lt 2 ] || [ $# -gt 7 ]; then
     echo "${help_message}" 1>&2
     exit 1;
 fi
@@ -38,6 +38,7 @@ train_durations=$3
 train_durations_out=$4
 valid_durations=$5
 valid_durations_out=$6
+odim=$7
 
 data=$(dirname ${train_durations_out})
 logdir=${data}/log
@@ -46,5 +47,9 @@ mkdir -p ${logdir}
 # TODO - put sample rate/hop_len/num clusters etc into config
 nj=1
 ${cmd} JOB=1:${nj} ${logdir}/fix_durations.JOB.log \
-    pyscripts/feats/fix-durations.py ${train_feats} ${valid_feats} ${train_durations} ${train_durations_out} ${valid_durations} ${valid_durations_out}
+    pyscripts/feats/fix-durations.py ${train_feats} ${valid_feats} ${train_durations} ${train_durations_out} ${valid_durations} ${valid_durations_out} $odim
 
+if [ ! -f ${train_durations_out} ] || [ ! -f ${valid_durations_out} ]; then
+    echo "Error fixing durations"
+    exit -1;
+fi
