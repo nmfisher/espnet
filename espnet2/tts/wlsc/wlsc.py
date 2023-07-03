@@ -356,7 +356,7 @@ class WLSC(AbsTTS):
             positional_dropout_rate=decoder_positional_dropout_rate,
             attention_dropout_rate=decoder_attention_dropout_rate,
             positionwise_layer_type=decoder_positionwise_layer_type,
-            positionwise_conv_kernel_size=31, 
+            positionwise_conv_kernel_size=decoder_positionwise_conv_kernel_size, 
             pos_enc_layer_type="rel_pos",   
             selfattention_layer_type="rel_selfattn", 
             activation_type="swish",             
@@ -364,29 +364,9 @@ class WLSC(AbsTTS):
             use_cnn_module=decoder_use_cnn_module,
             cnn_module_kernel=decoder_cnn_module_kernel,
         )
-        # self.dec2 = ConformerEncoder(
-        #     idim=encoder_adim,
-        #     attention_dim=decoder_adim,
-        #     attention_heads=decoder_aheads,
-        #     input_layer=None,
-        #     num_blocks=decoder_numblocks,
-        #     dropout_rate=decoder_dropout_rate,
-        #     linear_units=decoder_linear_units,
-        #     positional_dropout_rate=decoder_positional_dropout_rate,
-        #     attention_dropout_rate=decoder_attention_dropout_rate,
-        #     positionwise_layer_type=decoder_positionwise_layer_type,
-        #     positionwise_conv_kernel_size=decoder_positionwise_conv_kernel_size, 
-        #     pos_enc_layer_type="rel_pos",   
-        #     selfattention_layer_type="rel_selfattn", 
-        #     activation_type="swish",             
-        #     macaron_style=False,
-        #     use_cnn_module=decoder_use_cnn_module,
-        #     cnn_module_kernel=decoder_cnn_module_kernel,
-        # )
         concat_dim = self.phone_embed_dim # + spk_embed_dim + self.pitch_embed_dim  + self.energy_embed_dim  #+ self.word_seq_embedding_dim +  # + self.style_token_dim
         # self.prior = PriorEncoder(idim=self.phone_embed_dim + self.word_seq_embedding_dim * 2, gru_units=self.style_token_dim,gru_layers=prior_layers)
 
-        # self.dec_to_codebook = torch.nn.ModuleList([PositionwiseFeedForward(decoder_adim,512,dropout_rate=0.05) for _ in range(self.odim)])
 
         self.feat_out = torch.nn.Linear(decoder_adim, self.odim)
 
@@ -411,8 +391,8 @@ class WLSC(AbsTTS):
         self.length_regulator = GaussianUpsampler()
 
         self.postnet = Postnet(
-                idim=odim*1024,
-                odim=odim*1024,
+                idim=odim,
+                odim=odim,
                 n_layers=postnet_layers,
                 n_chans=postnet_chans,
                 n_filts=postnet_filts,
@@ -580,7 +560,7 @@ class WLSC(AbsTTS):
         """
         batch_size = text.size(0)
         text = text[:, : text_lengths.max()]  # for data-parallel
-        feats = feats[:, : feats_lengths.max()] #.long().flatten(1,2)  
+        feats = feats[:, : feats_lengths.max()]#.long() #.flatten(1,2)  
         
         durations = durations[:, : durations_lengths.max() ]
 
@@ -671,7 +651,7 @@ class WLSC(AbsTTS):
         # ).transpose(1, 2)
 
         # before_outs = before_outs.view(
-        #     zs.size(0), -1, 1024
+        #     zs.size(0), -1, 2, int(self.odim / 2) 
         # )
         
         # after_outs = after_outs.view(
@@ -692,16 +672,19 @@ class WLSC(AbsTTS):
             #spk_emb_preds=spk_emb_preds,
             #spk_embs=spembs
         )
-        loss = duration_loss + before_loss #+ prior_loss + spk_loss
+        loss = duration_loss + before_loss.mean().item() #+ prior_loss + spk_loss
         if after_loss is not None:
             loss += after_loss 
         stats = dict(
-            before_loss=before_loss.item(),
+            before_loss=before_loss.mean().item(),
             after_loss=after_loss.item() if after_loss is not None else None,
             duration_loss=duration_loss.item(),
             # prior_loss=prior_loss.item(),
             # spk_loss=spk_loss.item()
         )
+        if len(loss.size()) > 2:
+            for i in range(before_loss.size(-1)):
+                stats[f"before_loss_quantizer{i}"] = before_loss[:,:,i].mean().item()
 
         loss, stats, weight = force_gatherable(
             (loss, stats, batch_size), loss.device
@@ -921,11 +904,11 @@ class WLSC(AbsTTS):
         # zs =  torch.stack([zs, zs2], dim=2)
                
         after_outs = self.feat_out(zs)
-        
-        # after_outs = after_outs.reshape(
-        #     zs.size(0), -1, 1024
+
+        # after_outs = after_outs.view(
+        #     zs.size(0), -1, 2, int(self.odim / 2) 
         # ).argmax(-1)
-        
+                
         # outs = []
         # for i, layer in enumerate(self.dec_to_codebook):
         #     if i == 0:
