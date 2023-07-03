@@ -10,7 +10,7 @@ from encodec.utils import convert_audio
 
 def get_parser():
     parser = argparse.ArgumentParser(
-        description="Extracts quantized Lyra feats from raw waveform.",
+        description="Extracts quantized Encodec feats from raw waveform.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--verbose", "-V", default=0, type=int, help="Verbose option")
