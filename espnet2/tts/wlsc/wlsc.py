@@ -21,6 +21,7 @@ from espnet.nets.pytorch_backend.transformer.positionwise_feed_forward import (
     PositionwiseFeedForward,  # noqa: H301
 )
 
+
 from espnet.nets.pytorch_backend.hqss.speaker_classifier import SpeakerClassifier
 
 from typeguard import check_argument_types
@@ -367,7 +368,6 @@ class WLSC(AbsTTS):
         concat_dim = self.phone_embed_dim # + spk_embed_dim + self.pitch_embed_dim  + self.energy_embed_dim  #+ self.word_seq_embedding_dim +  # + self.style_token_dim
         # self.prior = PriorEncoder(idim=self.phone_embed_dim + self.word_seq_embedding_dim * 2, gru_units=self.style_token_dim,gru_layers=prior_layers)
 
-
         self.feat_out = torch.nn.Linear(decoder_adim, self.odim)
 
         # define duration predictor
@@ -398,27 +398,27 @@ class WLSC(AbsTTS):
                 n_filts=postnet_filts,
                 use_batch_norm=True,
                 dropout_rate=postnet_dropout,
-        ) 
-
+        )
+        
         self.criterion = WLSCLoss(
-            use_weighted_masking=True
+            use_masking=True, use_weighted_masking=False
         )
 
-#        for c in [ 
-#            # self.spk_embed, 
-#            #self.speaker_emb_predictor,
-#            self.duration_predictor, 
-#            self.range_predictor, 
-#            #self.prior, 
-#            self.feat_out, 
-#            self.enc, 
-#            self.dec, 
+        for c in [ 
+            # self.spk_embed, 
+            #self.speaker_emb_predictor,
+            self.duration_predictor, 
+            self.range_predictor, 
+            #self.prior, 
+            self.feat_out, 
+            self.enc, 
+            self.dec, 
             #self.word_style_encoder, 
             # self.word_seq_enc, 
             # self.word_seq_proj 
-#            ]:
-#            pytorch_total_params = sum(p.numel() for p in c.parameters())
-#            print(f"params for {type(c).__name__} : {pytorch_total_params}")
+            ]:
+            pytorch_total_params = sum(p.numel() for p in c.parameters())
+            print(f"params for {type(c).__name__} : {pytorch_total_params}")
         # self.proj_up_down = proj_up_down
         
     # embeddings are phonetic token embeddings, BxLpxE
@@ -560,7 +560,7 @@ class WLSC(AbsTTS):
         """
         batch_size = text.size(0)
         text = text[:, : text_lengths.max()]  # for data-parallel
-        feats = feats[:, : feats_lengths.max()]#.long() #.flatten(1,2)  
+        feats = feats[:, : feats_lengths.max()]  # for data-parallel
         
         durations = durations[:, : durations_lengths.max() ]
 
@@ -604,7 +604,7 @@ class WLSC(AbsTTS):
         # word_enc_out, _ = self.word_seq_enc(phone_enc_averaged.detach())
         
         # prior_out = self.prior(phone_enc_averaged.detach(), word_enc_out.detach())  
-        
+
         concatenated = phone_enc #torch.cat([
             #phone_enc, 
          #   spembs.expand(-1,phone_enc.size(1), -1), 
@@ -633,30 +633,15 @@ class WLSC(AbsTTS):
         h_masks = self._source_mask(feats_lengths)        
         
         zs, _ = self.dec(self.enc_proj(upsampled), h_masks)  # (B, T_feats, adim)
-        
-        # zs2, _ = self.dec2(self.enc_proj(upsampled), h_masks)  # (B, T_feats, adim)
-        # zs =  torch.stack([zs, zs2], dim=2)
 
-        # outs = []
-        # for i, layer in enumerate(self.dec_to_codebook):
-        #     if i == 0:
-        #         outs += [layer(zs)]
-        #     else:
-        #         outs += [layer(zs + outs[-1])]
-        # before_outs = self.feat_out(torch.stack(outs,dim=2))
-        before_outs = self.feat_out(zs)
-        
+        before_outs = self.feat_out(zs).view(
+            zs.size(0), -1, self.odim
+        )  # (B, T_feats, odim)
+
         # after_outs = before_outs + self.postnet(
-        #    before_outs.transpose(1, 2)
+        #     before_outs.transpose(1, 2)
         # ).transpose(1, 2)
 
-        # before_outs = before_outs.view(
-        #     zs.size(0), -1, 2, int(self.odim / 2) 
-        # )
-        
-        # after_outs = after_outs.view(
-        #     zs.size(0), -1, self.odim, 1024
-        # )  # (B, T_feats, odim)
         before_loss, after_loss, duration_loss  = self.criterion(  #, prior_loss, spk_loss
             after_outs=None, #after_outs,
             before_outs=before_outs,
@@ -672,19 +657,20 @@ class WLSC(AbsTTS):
             #spk_emb_preds=spk_emb_preds,
             #spk_embs=spembs
         )
-        loss = duration_loss + before_loss.mean().item() #+ prior_loss + spk_loss
+        loss = duration_loss + before_loss.sum() #+ prior_loss + spk_loss
+        
         if after_loss is not None:
-            loss += after_loss 
+            loss += after_loss
+
         stats = dict(
-            before_loss=before_loss.mean().item(),
-            after_loss=after_loss.item() if after_loss is not None else None,
+            before_loss=before_loss.sum().item(),
             duration_loss=duration_loss.item(),
             # prior_loss=prior_loss.item(),
             # spk_loss=spk_loss.item()
         )
-        if len(loss.size()) > 2:
-            for i in range(before_loss.size(-1)):
-                stats[f"before_loss_quantizer{i}"] = before_loss[:,:,i].mean().item()
+
+        if after_loss is not None:
+            stats["after_loss"]=after_loss.item() 
 
         loss, stats, weight = force_gatherable(
             (loss, stats, batch_size), loss.device
@@ -821,7 +807,6 @@ class WLSC(AbsTTS):
         # add eos at the last of sequence
         # text = F.pad(text, [0, 1], "constant", float(self.eos))
         ilens = torch.tensor([text.size(0)])
-
         
         # durations = F.pad(durations, [0, 1], "constant", 0)
         # pitch = F.pad(pitch, [0, 1], "constant", 0)
@@ -898,48 +883,20 @@ class WLSC(AbsTTS):
         #upsampled = self.length_regulator(concatenated, torch.zeros(r_outs.size()), durations.unsqueeze(0))  # (B, T_feats, adim)
         
         h_masks = torch.ones(1, upsampled.size(1), dtype=torch.bool).to(concatenated.device)
-
-        zs, _ = self.dec(self.enc_proj(upsampled), h_masks)  # (B, T_feats, adim)
-        # zs2, _ = self.dec2(self.enc_proj(upsampled), h_masks)  # (B, T_feats, adim)
-        # zs =  torch.stack([zs, zs2], dim=2)
-               
-        after_outs = self.feat_out(zs)
-
-        # after_outs = after_outs.view(
-        #     zs.size(0), -1, 2, int(self.odim / 2) 
-        # ).argmax(-1)
-                
-        # outs = []
-        # for i, layer in enumerate(self.dec_to_codebook):
-        #     if i == 0:
-        #         outs += [layer(zs)]
-        #     else:
-        #         outs += [layer(zs + outs[-1])]
-        # after_outs = self.feat_out(torch.stack(outs,dim=2))
-
-    #    after_outs = before_outs + self.postnet(
-    #        before_outs.transpose(1, 2)
-    #    ).transpose(1, 2)
+        
+        zs, _ = self.dec(upsampled,h_masks)  # (B, T_feats, adim)
 
         # if self.proj_up_down:
         #     zs = self.dec_proj_down(self.dec_proj_up(zs))
-       
-        #after_outs = self.postnet(
-        #    before_outs.transpose(1, 2)
+                
+        before_outs = self.feat_out(zs) #.view(
+            # zs.size(0), -1, self.odim
+        # )  # (B, T_feats, odim)
+
+        after_outs = before_outs #+ self.postnet(
+            #before_outs.transpose(1, 2)
         #).transpose(1, 2)
         
-        #after_outs = after_outs.view(
-        #    zs.size(0), -1, self.odim, 16
-        #)  # (B, T_feats, odim)
-
-        # after_outs = before_outs.view(
-        #     zs.size(0), -1, self.odim, 1024
-        # ) + self.postnet(
-        #    before_outs.transpose(1, 2)
-        # ).transpose(1, 2).view(
-        #    zs.size(0), -1, self.odim, 1024
-        # )
-
         return after_outs, d_outs
         
     @torch.jit.ignore

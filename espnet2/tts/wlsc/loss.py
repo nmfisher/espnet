@@ -17,7 +17,7 @@ from espnet.nets.pytorch_backend.tacotron2.utils import make_non_pad_mask
 class WLSCLoss(torch.nn.Module):
     """Loss function module for WLSC."""
 
-    def __init__(self, use_weighted_masking: bool = False):
+    def __init__(self, use_masking:bool=True, use_weighted_masking: bool = False):
         """Initialize feed-forward Transformer loss module.
 
         Args:
@@ -29,7 +29,8 @@ class WLSCLoss(torch.nn.Module):
         """
         assert check_argument_types()
         super().__init__()
-
+        
+        self.use_masking = True
         self.use_weighted_masking = use_weighted_masking
 
         # define criterions
@@ -78,29 +79,32 @@ class WLSCLoss(torch.nn.Module):
         """
         after_loss :  Optional[torch.Tensor] = None
         if ys.dtype == torch.float:
-            # apply mask to remove padded part
-            out_masks = make_non_pad_mask(olens).to(ys.device).unsqueeze(-1)
-            before_outs = before_outs.masked_select(out_masks)
-            if after_outs is not None:
-                after_outs = after_outs.masked_select(out_masks)
-            ys = ys.masked_select(out_masks)
-            duration_masks = make_non_pad_mask(ilens).to(ys.device)
-            d_outs = d_outs.masked_select(duration_masks)
-            ds = ds.masked_select(duration_masks)    
+            if self.use_masking:
+                # apply mask to remove padded part
+                out_masks = make_non_pad_mask(olens).to(ys.device).unsqueeze(-1)
+                before_outs = before_outs.masked_select(out_masks)
+                if after_outs is not None:
+                    after_outs = after_outs.masked_select(out_masks)
+                ys = ys.masked_select(out_masks)
+                duration_masks = make_non_pad_mask(ilens).to(ys.device)
+                d_outs = d_outs.masked_select(duration_masks)
+                ds = ds.masked_select(duration_masks)    
+            
             before_loss = self.huber_criterion(before_outs, ys)
             if after_outs is not None:
                 after_loss = self.huber_criterion(after_outs, ys)
-            # spk_loss = torch.nn.functional.cross_entropy(spk_class, sids.squeeze(1))
-            #spk_loss = torch.nn.functional.mse_loss(spk_emb_preds, spk_embs.squeeze(1))
-
-            # calculate loss
+            
         elif ys.dtype ==  torch.int64 or ys.dtype == torch.int32:
-            out_masks = make_non_pad_mask(olens).to(ys.device)
+
             before_loss = torch.nn.functional.cross_entropy(before_outs.permute(0,3,1,2), ys, reduction='none')
-            before_loss[~out_masks] = 0
             if after_outs is not None:
                 after_loss = torch.nn.functional.cross_entropy(after_outs.permute(0,3,1,2), ys,reduction='none')
-                after_loss[~out_masks] = 0
+
+            if self.use_masking:
+                out_masks = make_non_pad_mask(olens).to(ys.device)
+                before_loss[~out_masks] = 0
+                if after_outs is not None:
+                    after_loss[~out_masks] = 0
         else:
             raise Exception("Unknown target dtype : " + str(ys.dtype))
         duration_loss = self.duration_criterion(d_outs, ds).mean()
@@ -109,6 +113,4 @@ class WLSCLoss(torch.nn.Module):
         # if self.use_weighted_masking:
             # out_weights = torch.pow(0.5, torch.arange(ys.size(-1))).to(ys.device)
             # before_loss = before_loss.mul(out_weights)
-        # feat_loss = feat_loss.sum()
-        #  prior_loss = self.prior_l1_criterion(prior_out, word_style_enc)
-        return before_loss, after_loss.sum() if after_loss is not None else None, duration_loss, # spk_loss  prior_loss, 
+        return before_loss, after_loss if after_loss is not None else None, duration_loss
