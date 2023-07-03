@@ -88,5 +88,5 @@ if [ ${nf} -ne ${nu} ]; then
     echo "consider using utils/fix_data_dir.sh $data"
 fi
 
-echo "Succeeded extracting Lyra features for $name"
+echo "Succeeded extracting Encodec features for $name"
 
