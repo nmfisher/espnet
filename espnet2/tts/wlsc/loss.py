@@ -96,10 +96,10 @@ class WLSCLoss(torch.nn.Module):
             # calculate loss
         elif ys.dtype ==  torch.int64 or ys.dtype == torch.int32:
             out_masks = make_non_pad_mask(olens).to(ys.device)
-            before_loss = torch.nn.functional.cross_entropy(before_outs.permute(0,2,1), ys, reduction='none')
+            before_loss = torch.nn.functional.cross_entropy(before_outs.permute(0,3,1,2), ys, reduction='none')
             before_loss[~out_masks] = 0
             if after_outs is not None:
-                after_loss = torch.nn.functional.cross_entropy(after_outs.permute(0,2,1), ys,reduction='none')
+                after_loss = torch.nn.functional.cross_entropy(after_outs.permute(0,3,1,2), ys,reduction='none')
                 after_loss[~out_masks] = 0
         else:
             raise Exception("Unknown target dtype : " + str(ys.dtype))
@@ -111,4 +111,4 @@ class WLSCLoss(torch.nn.Module):
             # before_loss = before_loss.mul(out_weights)
         # feat_loss = feat_loss.sum()
         #  prior_loss = self.prior_l1_criterion(prior_out, word_style_enc)
-        return before_loss.mean(), after_loss.sum() if after_loss is not None else None, duration_loss, # spk_loss  prior_loss, 
+        return before_loss, after_loss.sum() if after_loss is not None else None, duration_loss, # spk_loss  prior_loss, 
