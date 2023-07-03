@@ -213,7 +213,7 @@ if [ "${feats_type}" = "raw" ]; then
     data_feats="${dumpdir}/raw"
 elif [ "${feats_type}" = lyra ]; then
     data_feats="${dumpdir}/raw"      
-    odim=30
+    odim=480
     feats_file="feats.scp"
     feats_filetype="kaldi_ark"
 elif [ "${feats_type}" = "lpcnet" ]; then
@@ -225,7 +225,7 @@ elif [ "${feats_type}" = "wlsc" ]; then
     data_feats="${dumpdir}/raw"    
 elif [ "${feats_type}" = "encodec" ]; then
     data_feats="${dumpdir}/raw"
-    odim=2    
+    odim=2048 # 2x1024
     feats_file="feats.scp"
     feats_filetype="kaldi_ark"
 else
@@ -240,7 +240,7 @@ fi
 # b) we want control over the exact token<->ID mappings (e.g. if we want to use exactly the same mappings in some other model
 # this script expects the file data/symbol_ids.txt to exist, and copies to ${dump_dir/token_list/tokens.txt} prepending <blank> and appending <sos/eos>
 # symbol_ids.txt has one token per line, where the line number (zero-indexed) represents the symbol ID.
-src_tokens=$(cat data/train/text | cut -d' ' -f2- | tr ' ' '\n' | tr '[:upper:]' '[:lower:]' | sort | uniq )
+src_tokens=$(cat data/train/text | cut -d' ' -f2- | tr ' ' '\n' | sort | uniq )
 
 mkdir -p "${dumpdir}/token_list"
 token_list="${dumpdir}/token_list/tokens.txt"
@@ -487,7 +487,7 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
             factor=50
         elif [ $feats_type == "encodec" ]; then
         # Encodec 24khz model is 75Hz
-            factor=150 # 75
+            factor=75
         fi
 
         python ./pyscripts/feats/convert_second_to_frame_alignments.py ark,t:${data_feats}/${train_set}/durations scp:${data_feats}/${train_set}/feats.scp scp,ark,t:${data_feats}/${train_set}/durations.scp,${data_feats}/${train_set}/durations.ark $factor 
