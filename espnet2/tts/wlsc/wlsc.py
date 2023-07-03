@@ -560,7 +560,7 @@ class WLSC(AbsTTS):
         """
         batch_size = text.size(0)
         text = text[:, : text_lengths.max()]  # for data-parallel
-        feats = feats[:, : feats_lengths.max()]  # for data-parallel
+        feats = feats[:, : feats_lengths.max()].long()  # for data-parallel
         
         durations = durations[:, : durations_lengths.max() ]
 
@@ -635,7 +635,7 @@ class WLSC(AbsTTS):
         zs, _ = self.dec(self.enc_proj(upsampled), h_masks)  # (B, T_feats, adim)
 
         before_outs = self.feat_out(zs).view(
-            zs.size(0), -1, self.odim
+            zs.size(0), -1, 2, int(self.odim / 2)
         )  # (B, T_feats, odim)
 
         # after_outs = before_outs + self.postnet(
@@ -884,14 +884,14 @@ class WLSC(AbsTTS):
         
         h_masks = torch.ones(1, upsampled.size(1), dtype=torch.bool).to(concatenated.device)
         
-        zs, _ = self.dec(upsampled,h_masks)  # (B, T_feats, adim)
+        zs, _ = self.dec(self.enc_proj(upsampled),h_masks)  # (B, T_feats, adim)
 
         # if self.proj_up_down:
         #     zs = self.dec_proj_down(self.dec_proj_up(zs))
                 
-        before_outs = self.feat_out(zs) #.view(
-            # zs.size(0), -1, self.odim
-        # )  # (B, T_feats, odim)
+        before_outs = self.feat_out(zs).view(
+            zs.size(0), -1, 2, int(self.odim / 2)
+        ).argmax(-1)  # (B, T_feats, odim)
 
         after_outs = before_outs #+ self.postnet(
             #before_outs.transpose(1, 2)
