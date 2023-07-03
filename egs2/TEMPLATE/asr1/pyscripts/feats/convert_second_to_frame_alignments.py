@@ -38,10 +38,9 @@ def main():
     with ReadHelper(args.feats) as feats_reader, ReadHelper(args.durations) as durations_reader, WriteHelper(args.output) as writer:
         for (utt_id, durs), (feat_utt_id, feats) in zip(durations_reader, feats_reader):
             assert utt_id == feat_utt_id
-            if "0328" in utt_id:
-                print(feats.shape)
-                print(sum(durs))            
-                print(durs)
+            print(feats.shape)
+            print(sum(durs))            
+            print(durs)
 
             durs = durs * args.framerate
             frame_durations=[]
@@ -56,12 +55,12 @@ def main():
             feat_frames = feats.shape[0]
             diff = sum_frames - feat_frames
             
-            if diff > 2 or diff < -2:
-                raise Exception(f"Gap too big for {utt_id}")
+            if diff > 5 or diff < -5:
+                raise Exception(f"Frame diff {diff} too big for {utt_id}")
             elif diff > 0:
                 for i in range(len(frame_durations) - 1, 0, -1):
                     if frame_durations[i] > 1:
-                        frame_durations[i] += 1
+                        frame_durations[i] -= 1
                         diff -=1
                     if diff == 0:
                         break
@@ -72,7 +71,7 @@ def main():
                     if diff == 0:
                         break    
             
-            assert sum(frame_durations) == feats.shape[0], f"{sum(frame_durations)} vs {feat_frames}"
+            assert sum(frame_durations) == feats.shape[0], f"{sum(frame_durations)} vs {feat_frames} for utt {utt_id}"
             writer(utt_id, np.array(frame_durations))
 
 if __name__ == "__main__":
