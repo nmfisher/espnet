@@ -72,7 +72,7 @@ done
 utils/split_scp.pl ${scp} ${split_scps}
 
 ${cmd} JOB=1:${nj} ${logdir}/make_encodec_feats_${name}.JOB.log \
-    pyscripts/feats/extract-encodec.py scp:${logdir}/wav.JOB.scp scp,ark,t:${featdir}/encodec_feats_${name}.JOB.scp,${featdir}/encodec_feats_${name}.JOB.ark
+    pyscripts/feats/extract-encodec.py scp:${logdir}/wav.JOB.scp scp,ark:${featdir}/encodec_feats_${name}.JOB.scp,${featdir}/encodec_feats_${name}.JOB.ark
 
 # concatenate the .scp files together.
 for n in $(seq ${nj}); do
