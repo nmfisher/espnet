@@ -267,7 +267,7 @@ class TTSTask(AbsTask):
         cls, train: bool = True, inference: bool = False
     ) -> Tuple[str, ...]:
         if not inference:
-            retval = ("text", "speech")
+            retval = ("text", "feats")
         else:
             # Inference mode
             retval = ("text",)
@@ -278,10 +278,10 @@ class TTSTask(AbsTask):
         cls, train: bool = True, inference: bool = False
     ) -> Tuple[str, ...]:
         if not inference:
-            retval = ("spembs", "durations", "pitch", "energy", "sids", "lids", "phone_word_mappings","word_phone_mappings")
+            retval = ("spembs", "durations", "pitch", "energy", "sids", "lids", "phone_word_mappings","word_phone_mappings","lyra_feats")
         else:
             # Inference mode
-            retval = ("spembs", "speech", "durations", "pitch", "energy", "sids", "lids", "phone_word_mappings", "word_phone_mappings","feats_word_avg")
+            retval = ("spembs", "feats", "lyra_feats", "durations", "pitch", "energy", "sids", "lids", "phone_word_mappings", "word_phone_mappings","feats_word_avg")
         return retval
 
     @classmethod
