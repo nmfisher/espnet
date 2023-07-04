@@ -213,7 +213,7 @@ if [ "${feats_type}" = "raw" ]; then
     data_feats="${dumpdir}/raw"
 elif [ "${feats_type}" = lyra ]; then
     data_feats="${dumpdir}/raw"      
-    odim=480
+    odim=64
     feats_file="feats.scp"
     feats_filetype="kaldi_ark"
 elif [ "${feats_type}" = "lpcnet" ]; then
@@ -225,7 +225,7 @@ elif [ "${feats_type}" = "wlsc" ]; then
     data_feats="${dumpdir}/raw"    
 elif [ "${feats_type}" = "encodec" ]; then
     data_feats="${dumpdir}/raw"
-    odim=2048 # 2x1024
+    odim=8192 # 8x1024
     feats_file="feats.scp"
     feats_filetype="kaldi_ark"
 else
@@ -469,6 +469,10 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
     fi
     ./scripts/feats/$feat_script --nj "${_nj}" ${data_feats}/${train_set} || exit -1;
     ./scripts/feats/$feat_script --nj "${_nj}" ${data_feats}/${valid_set} || exit -1;
+
+    ./scripts/feats/make_lyra_feats.sh --nj "${_nj}" ${data_feats}/${train_set} || exit -1;
+    ./scripts/feats/make_lyra_feats.sh --nj "${_nj}" ${data_feats}/${valid_set} || exit -1;
+
 fi
 
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
@@ -606,10 +610,12 @@ if ! "${skip_train}"; then
                 --pitch_normalize none \
                 --energy_normalize none \
                 --train_data_path_and_name_and_type "${_train_dir}/text,text,text" \
-                --train_data_path_and_name_and_type "${_train_dir}/${_scp},speech,${_type}" \
-                --valid_data_path_and_name_and_type "${_valid_dir}/text,text,text" \
-                --valid_data_path_and_name_and_type "${_valid_dir}/${_scp},speech,${_type}" \
+                --train_data_path_and_name_and_type "${_train_dir}/${_scp},feats,${_type}" \
+                --train_data_path_and_name_and_type "${_train_dir}/lyra_feats.scp,lyra_feats,kaldi_ark " \
                 --train_data_path_and_name_and_type "${_train_dir}/durations.scp,durations,kaldi_ark " \
+                --valid_data_path_and_name_and_type "${_valid_dir}/text,text,text" \
+                --valid_data_path_and_name_and_type "${_valid_dir}/${_scp},feats,${_type}" \
+                --valid_data_path_and_name_and_type "${_valid_dir}/lyra_feats.scp,lyra_feats,kaldi_ark " \
                 --valid_data_path_and_name_and_type "${_valid_dir}/durations.scp,durations,kaldi_ark " \
                 --train_shape_file "${_logdir}/train.JOB.scp" \
                 --valid_shape_file "${_logdir}/valid.JOB.scp" \
@@ -671,8 +677,10 @@ if ! "${skip_train}"; then
         _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/text,text,text "
         _opts+="--valid_shape_file ${tts_stats_dir}/valid/text_shape.${token_type} "
 
-        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/${feats_file},speech,${feats_filetype} "
-        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/${feats_file},speech,${feats_filetype} "
+        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/${feats_file},feats,${feats_filetype} "
+        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/${feats_file},feats,${feats_filetype} "
+        _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/lyra_feats.scp,lyra_feats,kaldi_ark  "
+        _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/lyra_feats.scp,lyra_feats,kaldi_ark "
 
         _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/durations.scp,durations,kaldi_ark "
         _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/durations.scp,durations,kaldi_ark "
@@ -998,8 +1006,10 @@ if [ ${stage} -le 12 ] && [ ${stop_stage} -ge 12 ]; then
     _opts+="--valid_data_path_and_name_and_type ${_valid_dir}/text,text,text "
     _opts+="--valid_shape_file ${tts_stats_dir}/valid/text_shape.${token_type} "
 
-    _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/feats.scp,speech,kaldi_ark "
-    _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/feats.scp,speech,kaldi_ark "
+    _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/feats.scp,feats,kaldi_ark "
+    _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/feats.scp,feats,kaldi_ark "
+    _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/lyra_feats.scp,lyra_feats,kaldi_ark "
+    _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/lyra_feats.scp,lyra_feats,kaldi_ark "
 
     _opts+="--train_data_path_and_name_and_type ${data_feats}/${train_set}/durations,durations,text_int "
     _opts+="--valid_data_path_and_name_and_type ${data_feats}/${valid_set}/durations,durations,text_int "
