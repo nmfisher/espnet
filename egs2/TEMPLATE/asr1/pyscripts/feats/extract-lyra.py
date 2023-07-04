@@ -52,34 +52,34 @@ def main():
                     raise Exception("Expected 16000Hz PCM16 audio")
                 wav_path = os.path.join(output_dir, f"{utt_id}.wav")
                 sf.write(wav_path, audio, fs)
-                #encoder = tf.lite.Interpreter("/home/hydroxide/projects/lyra/lyra/model_coeffs/soundstream_encoder.tflite")
-                #encoder.allocate_tensors()
+                encoder = tf.lite.Interpreter("/home/hydroxide/projects/lyra/lyra/model_coeffs/soundstream_encoder.tflite")
+                encoder.allocate_tensors()
 
-                #encoder_runner = encoder.get_signature_runner("serving_default")
-                #encoder_input_details = encoder_runner.get_input_details()
+                encoder_runner = encoder.get_signature_runner("serving_default")
+                encoder_input_details = encoder_runner.get_input_details()
+                encoder_outputs = []
+                audio = audio.astype(np.float32) / 32767
+                for i in range(0, audio.shape[0], 320):
+                    audio_segment = audio[i:i+320]
+                    if audio_segment.shape[0] < 320:
+                        audio_segment = np.pad(audio_segment, (0,320 - audio_segment.shape[0]))
+                    output = encoder_runner(input_audio=audio_segment)
+                    encoder_outputs += [ output["output_0"] ]
+                feats = np.array(encoder_outputs).squeeze()
 
-                process = subprocess.run(['encoder_main', "--input_path", wav_path, "--output_dir", output_dir, "--bitrate", "6000", "--model_path", model_path ])
-                lyra_out = wav_path.replace(".wav", ".lyra")
-                #print(f"Extracted Lyra feats from {wav_path} to {lyra_out}")
-                int8=[]
-                with open(lyra_out, "rb") as infile:
-                    for i in infile.read():
-                        v1 = i & 0b11110000
-                        v2 = i & 0b00001111
-                        int8 += [v1 >> 4, v2]
-                feats = np.array(int8).astype(np.int32)
-                feats = feats.reshape(-1, 30).astype(np.float32) # even though these are integers, espnet/kaldiio only allows matrices to be stored as float32 so we convert 
+                # process = subprocess.run(['encoder_main', "--input_path", wav_path, "--output_dir", output_dir, "--bitrate", "6000", "--model_path", model_path ])
+                # lyra_out = wav_path.replace(".wav", ".lyra")
+                # #print(f"Extracted Lyra feats from {wav_path} to {lyra_out}")
+                # int8=[]
+                # with open(lyra_out, "rb") as infile:
+                #     for i in infile.read():
+                #         v1 = i & 0b11110000
+                #         v2 = i & 0b00001111
+                #         int8 += [v1 >> 4, v2]
+                # feats = np.array(int8).astype(np.int32)
+                # feats = feats.reshape(-1, 30).astype(np.float32) # even though these are integers, espnet/kaldiio only allows matrices to be stored as float32 so we convert 
                 # this avoids needing to constantly reshape later in the pipeline
 
-#                encoder_outputs = []
-#                audio = audio.astype(np.float32) / 32767
-#                for i in range(0, audio.shape[0], 320):
-#                    audio_segment = audio[i:i+320]
-#                    if audio_segment.shape[0] < 320:
-#                        audio_segment = np.pad(audio_segment, (0,320 - audio_segment.shape[0]))
-#                    output = encoder_runner(input_audio=audio_segment)
-#                    encoder_outputs += [ output["output_0"] ]
-#                feats = np.array(encoder_outputs).squeeze()
 
                 writer(utt_id, feats)
 #                print(f"Wrote Lyra feats of length {feats.shape} to file {lyra_out}")
