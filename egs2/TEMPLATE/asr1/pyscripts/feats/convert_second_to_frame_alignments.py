@@ -55,7 +55,7 @@ def main():
             feat_frames = feats.shape[0]
             diff = sum_frames - feat_frames
             
-            if diff > 5 or diff < -5:
+            if diff > 2 or diff < -2:
                 raise Exception(f"Frame diff {diff} too big for {utt_id}")
             elif diff > 0:
                 for i in range(len(frame_durations) - 1, 0, -1):
