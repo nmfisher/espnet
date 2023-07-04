@@ -74,16 +74,16 @@ done
 utils/split_scp.pl ${scp} ${split_scps}
 
 ${cmd} JOB=1:${nj} ${logdir}/make_lyra_feats_${name}.JOB.log \
-    pyscripts/feats/extract-lyra.py scp:${logdir}/wav.JOB.scp scp,ark,t:${featdir}/lyra_feats_${name}.JOB.scp,${featdir}/lyra_feats_${name}.JOB.ark
+    pyscripts/feats/extract-lyra.py scp:${logdir}/wav.JOB.scp scp,ark:${featdir}/lyra_feats_${name}.JOB.scp,${featdir}/lyra_feats_${name}.JOB.ark
 
 # concatenate the .scp files together.
 for n in $(seq ${nj}); do
     cat ${featdir}/lyra_feats_${name}.${n}.scp || exit 1;
-done > ${data}/feats.scp || exit 1
+done > ${data}/lyra_feats.scp || exit 1
 
 rm -f ${logdir}/wav.*.scp  2>/dev/null
 
-nf=$(wc -l < ${data}/feats.scp)
+nf=$(wc -l < ${data}/lyra_feats.scp)
 nu=$(wc -l < ${data}/wav.scp)
 if [ ${nf} -ne ${nu} ]; then
     echo "It seems not all of the feature files were successfully ($nf != $nu);"
