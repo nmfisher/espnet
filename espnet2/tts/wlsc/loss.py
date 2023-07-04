@@ -45,11 +45,14 @@ class WLSCLoss(torch.nn.Module):
         self,
         after_outs: torch.Tensor,
         before_outs: torch.Tensor,
+        lyra_outs: torch.Tensor,
+        lyra_ys: torch.Tensor,
         d_outs: torch.Tensor,
         ys: torch.Tensor,
         ds: torch.Tensor,
         ilens: torch.Tensor,
         olens: torch.Tensor,
+        lyra_olens: torch.Tensor,
         # prior_out: torch.Tensor,
         # word_style_enc: torch.Tensor,
         sids: torch.Tensor,
@@ -78,19 +81,29 @@ class WLSCLoss(torch.nn.Module):
 
         """
         after_loss :  Optional[torch.Tensor] = None
+        # ys = ys.view(ys.size(0), -1, 8200)
+        
         if ys.dtype == torch.float:
             if self.use_masking:
                 # apply mask to remove padded part
                 out_masks = make_non_pad_mask(olens).to(ys.device).unsqueeze(-1)
-                before_outs = before_outs.masked_select(out_masks)
+                lyra_out_masks = make_non_pad_mask(lyra_olens).to(ys.device).unsqueeze(-1)
+                masked_before_outs = before_outs.masked_select(out_masks)
+                masked_lyra_outs = lyra_outs.masked_select(lyra_out_masks)
                 if after_outs is not None:
                     after_outs = after_outs.masked_select(out_masks)
-                ys = ys.masked_select(out_masks)
+                # masked_ys = ys[:,:,8:].masked_select(out_masks.squeeze(-1))
+                masked_ys = ys.masked_select(out_masks)
+                masked_lyra_ys = lyra_ys.masked_select(lyra_out_masks)
                 duration_masks = make_non_pad_mask(ilens).to(ys.device)
                 d_outs = d_outs.masked_select(duration_masks)
                 ds = ds.masked_select(duration_masks)    
             
-            before_loss = self.huber_criterion(before_outs, ys)
+            before_loss = self.huber_criterion(masked_before_outs, masked_ys).sum()
+            lyra_loss = self.mse_criterion(masked_lyra_outs, masked_lyra_ys).sum()
+            # xe_loss = torch.nn.functional.cross_entropy(before_outs.permute(0,3,1,2), ys[:,:,:8].long(), reduction='none')
+            # xe_loss[~out_masks.squeeze(-1).squeeze(-1)] = 0
+            # before_loss += xe_loss.sum()
             if after_outs is not None:
                 after_loss = self.huber_criterion(after_outs, ys)
             
@@ -113,4 +126,4 @@ class WLSCLoss(torch.nn.Module):
         # if self.use_weighted_masking:
             # out_weights = torch.pow(0.5, torch.arange(ys.size(-1))).to(ys.device)
             # before_loss = before_loss.mul(out_weights)
-        return before_loss, after_loss if after_loss is not None else None, duration_loss
+        return before_loss, after_loss if after_loss is not None else None, lyra_loss, duration_loss
