@@ -37,6 +37,7 @@ def main():
 
     model = EncodecModel.encodec_model_24khz()
     model.set_target_bandwidth(1.5)
+    lm = model.get_lm_model()
     
     with WriteHelper(args.outs) as writer:
         with ReadHelper(args.wavs) as reader:
@@ -48,10 +49,24 @@ def main():
                     resampled = audio
                 with torch.no_grad():
                     encoded_frames = model.encode(resampled[None][None])
+                    # frame = encoded_frames[0][0]
+                    # _, K, T = frame.shape
+                    # states = None
+                    # offset = 0
+                    # input_ = torch.zeros(1, K, 1, dtype=torch.long)
+                    # output = []
+                    # for t in range(T):
+                    #     with torch.no_grad():
+                    #         probas, states, offset = lm(input_, states, offset)
+                    #     input_ = 1 + frame[:, :, t: t + 1]
+                    #     output += [probas[0, :, :, 0].T.flatten()]
+                    # output = np.vstack(output)
+                    # output = np.concatenate([frame[0].T.float(), output],axis=1)
+                    # writer(utt_id, output)
+
                     codes = torch.cat([encoded[0] for encoded in encoded_frames], dim=-1)  # [B, n_q, T]
                     codes = codes.transpose(1,2)
-
-                writer(utt_id, codes[0].numpy().astype(np.float32))
+                    writer(utt_id, codes[0].numpy().astype(np.float32))
                 
 
 if __name__ == "__main__":
