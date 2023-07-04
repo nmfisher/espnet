@@ -56,8 +56,10 @@ class ESPnetTTSModel(AbsESPnetModel):
         self,
         text: torch.Tensor,
         text_lengths: torch.Tensor,
-        speech: torch.Tensor,
-        speech_lengths: torch.Tensor,
+        feats: torch.Tensor,
+        feats_lengths: torch.Tensor,
+        lyra_feats: torch.Tensor,
+        lyra_feats_lengths: torch.Tensor,
         durations: Optional[torch.Tensor] = None,
         durations_lengths: Optional[torch.Tensor] = None,
         pitch: Optional[torch.Tensor] = None,
@@ -104,7 +106,7 @@ class ESPnetTTSModel(AbsESPnetModel):
                 feats, feats_lengths = self.feats_extract(speech, speech_lengths)
             else:
                 # Use precalculated feats (feats_type != raw case)
-                feats, feats_lengths = speech, speech_lengths
+                feats, feats_lengths = feats, feats_lengths
 
             # Extract auxiliary features
             if self.pitch_extract is not None and pitch is None:
@@ -159,6 +161,8 @@ class ESPnetTTSModel(AbsESPnetModel):
             batch.update(energy=energy, energy_lengths=energy_lengths)
         if self.tts.require_raw_speech:
             batch.update(speech=speech, speech_lengths=speech_lengths)
+        if lyra_feats is not None:
+            batch.update(lyra_feats=lyra_feats, lyra_feats_lengths=lyra_feats_lengths)
         batch.update(phone_word_mappings=phone_word_mappings, phone_word_mappings_lengths=phone_word_mappings_lengths,feats_word_avg=feats_word_avg,feats_word_avg_lengths=feats_word_avg_lengths)
 
         return self.tts(**batch)
@@ -167,8 +171,10 @@ class ESPnetTTSModel(AbsESPnetModel):
         self,
         text: torch.Tensor,
         text_lengths: torch.Tensor,
-        speech: torch.Tensor,
-        speech_lengths: torch.Tensor,
+        feats: torch.Tensor,
+        feats_lengths: torch.Tensor,
+        lyra_feats: torch.Tensor,
+        lyra_feats_lengths: torch.Tensor,
         durations: Optional[torch.Tensor] = None,
         durations_lengths: Optional[torch.Tensor] = None,
         pitch: Optional[torch.Tensor] = None,
@@ -204,10 +210,10 @@ class ESPnetTTSModel(AbsESPnetModel):
         """
         # feature extraction
         if self.feats_extract is not None:
-            feats, feats_lengths = self.feats_extract(speech, speech_lengths)
+            feats, feats_lengths = self.feats_extract(feats, feats_lengths)
         else:
             # Use precalculated feats (feats_type != raw case)
-            feats, feats_lengths = speech, speech_lengths
+            feats, feats_lengths = feats, feats_lengths
 
         if self.pitch_extract is not None:
             raise Exception()
